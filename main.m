@@ -17,10 +17,10 @@ waveform2 = waveform1;
 %% 2D Geometry (x,y only)
 Geometry.BSPos     = [0, 0];  % BS at origin, 2D
 
-Geometry.V1PosStart = [70, -100];
+Geometry.V1PosStart = [0, -100];
 Geometry.V1PosEnd   = [70,  100];
 
-Geometry.V2PosStart = [200, -50];
+Geometry.V2PosStart = [200, 0];
 Geometry.V2PosEnd   = [10,  -50];
 
 %% Distances (2D)
@@ -46,11 +46,11 @@ Geometry.DOAV2S = [Geometry.AOAV2Start; 0];
 Geometry.FSPLv1 = (4*pi*Geometry.DistV1Start/Pars.lambda)^2;
 Geometry.FSPLv2 = (4*pi*Geometry.DistV2Start/Pars.lambda)^2;
 
-waveform1 = waveform1 / sqrt(Geometry.FSPLv1);
-waveform2 = waveform2 / sqrt(Geometry.FSPLv1);
+waveform1Att = waveform1;
+waveform2Att = waveform2;
 
 %% BS Array
-Geometry.BSarray = phased.ULA('NumElements', 4, ...
+Geometry.BSarray = phased.ULA('NumElements', 8, ...
     'ElementSpacing', Pars.lambda/2);
 
 figure;
@@ -59,11 +59,66 @@ set(gca,'CameraViewAngle',4.4);
 
 %% Received signal
 recivedW = collectPlaneWave(Geometry.BSarray, ...
-    [waveform1', waveform2'], ...         % signals
+    [waveform1Att', waveform2Att'], ...         % signals
     [Geometry.DOAV1S Geometry.DOAV2S], ... % [az; el]
     Pars.fc);
 
 Pars.SNR = 10;
-chOut = awgn(recivedW, Pars.SNR, 'measured');
+Eg = sum(waveform1.^2)/numel(waveform1);
+awgnNoise = sqrt(Eg/(2*Pars.SNR)) * (randn(size(recivedW))+ 1j*randn(size(recivedW)));
+chOut = recivedW + awgnNoise;
 
 
+%% MVDR beamforming
+bfMulti = phased.MVDRBeamformer('SensorArray',Geometry.BSarray,...
+    'PropagationSpeed',Pars.c,'OperatingFrequency',Pars.fc,...
+    'Direction',[Geometry.DOAV1S Geometry.DOAV2S], ...
+    'WeightsOutputPort',true);
+
+[yMulti, w] = bfMulti(chOut);
+
+tx1 = (waveform1').^2;
+tx2 = (waveform2').^2;
+
+rx1 = abs(yMulti(:,1)).^2;
+rx2 = abs(yMulti(:,2)).^2;
+
+
+%% PLOTS
+
+figure;
+subplot(2,1,1);
+plot(tx1);
+title('Transmitted Waveform 1');
+xlabel('Sample');
+ylabel('Amplitude');
+
+subplot(2,1,2);
+plot(rx1);
+title('Beamformed Received Signal (Direction 1)');
+xlabel('Sample');
+ylabel('Amplitude');
+
+
+figure;
+subplot(2,1,1);
+plot(tx2);
+title('Transmitted Waveform 2');
+xlabel('Sample');
+ylabel('Amplitude');
+
+subplot(2,1,2);
+plot(rx2);
+title('Beamformed Received Signal (Direction 2)');
+xlabel('Sample');
+ylabel('Amplitude');
+
+%% Pattern beamforming
+figure;
+pattern(Geometry.BSarray,Pars.fc,[-180:180],0,'PropagationSpeed',Pars.c,...
+    'Weights',w,'CoordinateSystem','rectangular',...
+    'Type','powerdb');
+figure;
+pattern(Geometry.BSarray,Pars.fc,[-180:180],0,'PropagationSpeed',Pars.c ...
+    ,'CoordinateSystem','rectangular',...
+    'Type','powerdb');
