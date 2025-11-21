@@ -105,7 +105,7 @@ set(fig, 'WindowState', 'maximized');
 
 % Top row: Scenario map
 subplot(2,4,[1 2]);
-plot(Geometry.BSPos(1), Geometry.BSPos(2), 'k^', ...
+plot(Geometry.BSPos(1), Geometry.BSPos(2), 'w^', ...
     'MarkerSize',10,'LineWidth',2,'DisplayName','BS'); hold on;
 hPlotV1 = plot(Geometry.V1Pos(1), Geometry.V1Pos(2), 'bo', ...
     'MarkerFaceColor','b','DisplayName','UE 1');
@@ -113,7 +113,7 @@ hPlotV2 = plot(Geometry.V2Pos(1), Geometry.V2Pos(2), 'rs', ...
     'MarkerFaceColor','r','DisplayName','UE 2');
 hTrail1 = animatedline('Color','b','LineStyle',':');
 hTrail2 = animatedline('Color','r','LineStyle',':');
-axis([-10 100 -20 80]); grid on; title('Scenario V2X'); legend('Location','northwest');
+axis([-40 80 -50 50]); grid on; title('Scenario V2X'); legend('Location','northwest');
 
 % Top row: SINR plot
 subplot(2,4,[3 4]);
