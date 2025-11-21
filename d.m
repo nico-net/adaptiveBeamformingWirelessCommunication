@@ -7,33 +7,23 @@ clear;
 % ================================
 
 UE = struct( ...
-    'id',               [], ...   % UE identifier (index)
+    'id',               0, ...   % UE identifier (index)
     'active',           false, ...% whether UE is currently detected
     ...
-    'pos',              [NaN NaN 0], ... % [x y z] BS reference frame
-    'vel',              [0 0 0], ...     % velocity vector
-    ...
-    'DOA',              [NaN; NaN], ...  % [azimuth; elevation] in degrees
-    'DOA_prev',         [NaN; NaN], ...
-    'DOA_variation',    0, ...           % |DOA - DOA_prev|
+    'DOA',              [0; 0], ...  % [azimuth; elevation] in degrees
     ...
     'SNR',              NaN, ...         % estimated SNR
     'power',            NaN, ...         % received power
-    ...
-    'fD',               NaN, ...         % Doppler shift
-    'Tc',               NaN, ...         % coherence time estimate
-    'lastUpdate',       0, ...           % last weight update (in samples or time)
-    'nextUpdate',       Inf, ...         % next scheduled update
     ...
     'weights',          [], ...          % MVDR or other BF weights
     'output',           [], ...          % BF output signal for this UE
     ...
     'state',            'idle', ...      % idle, tracking, lost, newly_detected
-    'lifetime',         0 ...            % frames since first detection
 );
 
 %% Parameters
 Pars.fc = 1e9; %Hz
+Pars.SNR = 5; %in dB
 Pars.c = physconst('LightSpeed');
 Pars.lambda = Pars.c / Pars.fc;
 Pars.Fsin = 600;
@@ -41,7 +31,8 @@ Pars.Ts = 1e-5; %sample rate (s)
 Pars.Fsample = 1/Pars.Ts;
 Pars.TsVect = 0:Pars.Ts:5/Pars.Fsin;
 Pars.speed1 = 50; %km/h
-Pars.numFrame = 500;
+Pars.numFrame = 5;
+Pars.thresAngle = 5; %in degree
 
 waveform1 = sin(2*pi*Pars.Fsin*Pars.TsVect)';
 waveform2 = sin(2*pi*Pars.Fsin*Pars.TsVect + pi/3)';
@@ -63,7 +54,7 @@ figure;
 viewArray(Geometry.BSarray ,'Title','ULA 2D View')
 set(gca,'CameraViewAngle',4.4);
 
-%% Estimation of the number of UEs
+%% Receiving signal
 
 freeSpace = phased.FreeSpace('OperatingFrequency',Pars.fc,'SampleRate',Pars.Fsample);
 collector = phased.Collector('Sensor',Geometry.BSarray, ...
@@ -79,23 +70,40 @@ sigV1_at_BS = freeSpace(waveform1, Geometry.V1PosStart, Geometry.BSPos, vel1,zer
 sigV2_at_BS = freeSpace(waveform2, Geometry.V2PosStart, Geometry.BSPos, zeros(3,1), zeros(3,1));
 
 % calcola DOA dei due veicoli
-az1 = rad2deg( atan2( Geometry.V1PosStart(2) - Geometry.BSPos(2) , Geometry.V1PosStart(1) - Geometry.BSPos(1) ) );
-az2 = rad2deg( atan2( Geometry.V2PosStart(2) - Geometry.BSPos(2) , Geometry.V2PosStart(1) - Geometry.BSPos(1) ) );
+ang1 = rad2deg( atan2( Geometry.V1PosStart(2) - Geometry.BSPos(2) , Geometry.V1PosStart(1) - Geometry.BSPos(1) ) );
+ang2 = rad2deg( atan2( Geometry.V2PosStart(2) - Geometry.BSPos(2) , Geometry.V2PosStart(1) - Geometry.BSPos(1) ) );
 
-angles = [az1 az2;   % riga 1 = azimuth
+angles = [ang1 ang2;   % riga 1 = azimuth
           0    0];   % riga 2 = elevation
 
 
 % raccolta sull'array ULA
-recivedW = collector([sigV1_at_BS, sigV2_at_BS], angles);
+receivedW = collector([sigV1_at_BS, sigV2_at_BS], angles);
 
-R = (recivedW * recivedW') / size(recivedW,2);
+SNRlin = 10^(Pars.SNR/10);
+
+% average rx power
+Px = mean(abs(receivedW(:)).^2);
+
+% noise power
+sigma2 = Px / SNRlin;
+
+% awgn
+noise = sqrt(sigma2/2) * (randn(size(receivedW)) + 1j*randn(size(receivedW)));
+
+% output with noise
+chOut = receivedW + noise;
+
+%% Estimating the number of UEs
+
+
+R = (receivedW * receivedW') / size(receivedW,2);
 
 lambda = sort(eig(R), 'descend');
 lambda(lambda<0) = eps;
 
-M = size(R,1);     % numero di antenne
-N = size(recivedW,2); % numero di snapshot
+M = size(R,1);
+N = size(receivedW,2);
 
 mdl = zeros(M,1);
 
@@ -103,22 +111,22 @@ for k = 0:M-1
     gm = geomean(lambda(k+1:end));
     am = mean(lambda(k+1:end));
 
-    % funzione MDL
     mdl(k+1) = -N*(M-k)*log(gm/am) + 0.5*k*(2*M-k)*log(N);
 end
 
 [~, idx] = min(mdl);
 numUsers = idx-1;
 
-UE = repmat(UE, numUsers, 1); % crea vettore di struct
+%% UEs vector
+UE = repmat(UE, numUsers, 1); 
 for k = 1:numUsers
     UE(k).id = k;
     UE(k).active = true;
     UE(k).state = 'newly_detected';
 end
 
-%% DOA ESTIMATION
 
+% DOA ESTIMATOR
 musicEstimator = phased.MUSICEstimator( ...
     'SensorArray', Geometry.BSarray, ...
     'OperatingFrequency', Pars.fc, ...
@@ -126,40 +134,63 @@ musicEstimator = phased.MUSICEstimator( ...
     'DOAOutputPort',true,...
     'NumSignals', numUsers);
 
-for currentFrame = 1:Pars.numFrame
-    
-    [spectrum, doas] = musicEstimator(recivedW);
-    
-    %% 2. Update UE vector
-    for k = 1:numUsers
 
-        UE(k).DOA_prev = UE(k).DOA;
-        UE(k).DOA = doas(:,k);
-    
-        UE(k).DOA_variation = norm( UE(k).DOA - UE(k).DOA_prev );
-    
-        % update channel statistics
-        UE(k).power = mean(abs(UE(k).output).^2);
-    
-        % estimate Doppler from correlation or velocity (if known)
-        %UE(k).fD = estimateDoppler(UE(k),Pars);
-    
-        % update coherence time
-        %UE(k).Tc = 0.423 / abs(UE(k).fD + eps);
-        UE(k).Tc = 0.5;
-    
-        % schedule next weight update
-        UE(k).nextUpdate = UE(k).lastUpdate + UE(k).Tc/4;
-    
-        % MVDR update if necessary
-        if currentFrame >= UE(k).nextUpdate
-            %UE(k).weights = computeMVDRWeights(recivedW, UE(k).DOA, Geometry.BSarray, Pars);
-            UE(k).lastUpdate = currentFrame;
-        end
-    
-        % Apply beamforming
-        UE(k).output = UE(k).weights' * recivedW;
-    
+for currentFrame = 1:Pars.numFrame
+    % DOA estimation
+    [~, doas] = musicEstimator(receivedW);
+
+    % Update of the UEs
+    for k=1:numUsers
+            UE(k) = updateUE(UE(k), doas(:,k), currentFrame, Pars.thresAngle, ...
+                Geometry, Pars, chOut);
     end
 
+    %% New RX acquisition
+    
+    % to update with real position of UEs (silvio/pietro)
+    sigV1_at_BS = freeSpace(waveform1, Geometry.V1PosStart, Geometry.BSPos, vel1,zeros(3,1)); 
+    sigV2_at_BS = freeSpace(waveform2, Geometry.V2PosStart, Geometry.BSPos, zeros(3,1), zeros(3,1));
+    
+    ang1 = [rad2deg( atan2( Geometry.V1PosStart(2) - Geometry.BSPos(2) , Geometry.V1PosStart(1) - Geometry.BSPos(1) ) ), 0]';
+    ang2 = [rad2deg( atan2( Geometry.V2PosStart(2) - Geometry.BSPos(2) , Geometry.V2PosStart(1) - Geometry.BSPos(1) ) ), 0]';
+
+    receivedW = collectPlaneWave(Geometry.BSarray, ...
+    [sigV1_at_BS, sigV2_at_BS], ...         % signals
+    [ang1 , ang2], ... % [az; el]
+    Pars.fc);
+
+    noise = sqrt(sigma2/2) * (randn(size(receivedW)) + 1j*randn(size(receivedW)));
+
+    % output with noise
+    chOut = receivedW + noise;
+
 end
+
+
+
+function UE = updateUE(UE, doa, numFrame, thresAngle, Geometry, Pars, chOut)
+
+    doaAzEl =  [doa, 0]';
+
+    if norm(doaAzEl-UE.DOA) > thresAngle
+        UE.DOA = doaAzEl;
+    
+        % update channel statistics
+        UE.power = mean(abs(UE.output).^2);
+
+        bfMulti = phased.MVDRBeamformer('SensorArray',Geometry.BSarray,...
+            'PropagationSpeed',Pars.c,'OperatingFrequency',Pars.fc,...
+            'Direction',[UE.DOA], ...
+            'WeightsOutputPort',true);
+        
+        [yMulti, UE.weights] = bfMulti(chOut);
+       
+        % Apply beamforming
+        UE.output = yMulti;
+
+        UE.state = sprintf('updated %d-th UE at %d-th frame\n', UE.id, numFrame);
+        disp(UE.state);
+    end
+end
+
+
