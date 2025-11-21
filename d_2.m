@@ -2,156 +2,175 @@ close all;
 clear;
 clc;
 
-%% 1. PARAMETRI DEL SISTEMA
-Pars.fc = 1e9; % 1 GHz
+
+%% 1 System Parameters 
+Pars.fc = 1e9; 
 Pars.c = physconst('LightSpeed');
 Pars.lambda = Pars.c / Pars.fc;
-Pars.Fsin = 600; % Frequenza tono pilota
+
+% Signal Parameters
+Pars.Fsin = 600; 
 Pars.Fsample = 100e3; 
 Pars.Ts = 1/Pars.Fsample;
-Pars.SnapshotsPerFrame = 100; % Campioni usati per ogni stima
+Pars.SnapshotsPerFrame = 500; 
 Pars.TsVect = (0:Pars.SnapshotsPerFrame-1)*Pars.Ts;
-Pars.numFrame = 200; % Durata simulazione
 
-% Cinematica Veicoli
-Pars.speed1_kmh = 70; 
-Pars.speed2_kmh = 50;
+Pars.SignalDuration = Pars.SnapshotsPerFrame * Pars.Ts;
+
+% Movement Parameters
+Pars.TotalTime_s = 20;       
+Pars.PhysicsStep = 0.05;
+Pars.numFrame = ceil(Pars.TotalTime_s / Pars.PhysicsStep);
+dt = Pars.PhysicsStep;
+
+% Vehicles Parameters
+Pars.speed1_kmh = 7;
+Pars.speed2_kmh = 5;
 Pars.v1_ms = Pars.speed1_kmh * (1000/3600);
 Pars.v2_ms = Pars.speed2_kmh * (1000/3600);
 
-% Forme d'onda (Segnali pilota)
+% Waveforms
 waveform1 = sin(2*pi*Pars.Fsin*Pars.TsVect).'; 
-% Interferente con modulazione diversa (onda quadra approssimata)
-waveform2 = sign(sin(2*pi*Pars.Fsin*Pars.TsVect + pi/3)).'; 
+waveform2 = sign(sin(2*pi*Pars.Fsin*Pars.TsVect + pi/3)).';
 
-%% 2. GEOMETRIA E ARRAY
-Geometry.BSPos = [0; 0; 0]; 
 
-% Posizioni Iniziali
-Geometry.V1Pos = [40; 20; 0]; % Utente desiderato
-Geometry.V2Pos = [20; 50; 0]; % Interferente
-
-% Direzioni di movimento (Vettori unitari)
-dir1 = [1; 0.5; 0]; dir1 = dir1/norm(dir1); % Si allontana
-dir2 = [0.5; -1; 0]; dir2 = dir2/norm(dir2); % Scende verso l'asse X
-
-Geometry.V1Vel = Pars.v1_ms * dir1;
-Geometry.V2Vel = Pars.v2_ms * dir2;
-
-% Configurazione ULA (Uniform Linear Array)
-N_Elements = 8; % Numero antenne
+%% 2 Geometry
+N_Elements = 16; 
 Geometry.BSarray = phased.ULA('NumElements', N_Elements, ...
     'ElementSpacing', Pars.lambda/2);
 
-% Oggetto per calcolo Steering Vector (serve per MVDR)
+Geometry.BSPos = [0; 0; 0]; 
+Geometry.V1Pos = [20; -10; 0]; 
+Geometry.V2Pos = [20; 20; 0]; 
+
+dir1 = [1; 0.5; 0]; dir1 = dir1/norm(dir1);
+dir2 = [0.5; -1; 0]; dir2 = dir2/norm(dir2);
+Geometry.V1Vel = Pars.v1_ms * dir1;
+Geometry.V2Vel = Pars.v2_ms * dir2;
+
 steeringVec = phased.SteeringVector('SensorArray',Geometry.BSarray, ...
     'PropagationSpeed',Pars.c);
 
-%% 3. INIZIALIZZAZIONE STRUTTURA UE
-% Assumiamo 2 utenti noti all'inizio
+
+%% 3 UE STRUCT
 UE_template = struct( ...
-    'id', [], 'active', false, ...
-    'DOA', [0;0], 'DOA_prev', [0;0], ...
-    'weights', ones(N_Elements,1), ... % Pesi iniziali omni
-    'output', zeros(1, Pars.SnapshotsPerFrame));
+    'id',               [], ...   
+    'active',           false, ...
+    'pos',              [NaN; NaN; 0], ... 
+    'vel',              [0; 0; 0], ...     
+    'DOA',              [0; 0], ...      
+    'DOA_prev',         [0; 0], ...      
+    'DOA_variation',    0, ...           
+    'SNR',              NaN, ...         
+    'power',            NaN, ...                 
+    'lastUpdate',       0, ...           
+    'nextUpdate',       0, ...           
+    'weights',          ones(N_Elements, 1), ... 
+    'output',           [], ...          
+    'state',            'idle', ...      
+    'lifetime',         0 ...            
+);
 
-UEs = repmat(UE_template, 2, 1);
-for k = 1:2
-    UEs(k).id = k;
-    UEs(k).active = true;
-end
-% Inizializziamo DOA fittizi per il tracking iniziale
-[az1_init, ~] = rangeangle(Geometry.V1Pos, Geometry.BSPos);
-[az2_init, ~] = rangeangle(Geometry.V2Pos, Geometry.BSPos);
-UEs(1).DOA = [az1_init; 0];
-UEs(2).DOA = [az2_init; 0];
+numUsers = 2;
+UE = repmat(UE_template, numUsers, 1);
 
-%% 4. OGGETTI PHASED ARRAY
-% Canale di propagazione
+% Array Inizialization
+[az1, el1] = rangeangle(Geometry.V1Pos, Geometry.BSPos);
+[az2, el2] = rangeangle(Geometry.V2Pos, Geometry.BSPos);
+if isempty(el1), el1=0; end
+if isempty(el2), el2=0; end
+
+UE(1).id = 1; UE(1).active = true; UE(1).state = 'newly_detected';
+UE(1).DOA = [double(az1); double(el1)]; 
+
+UE(2).id = 2; UE(2).active = true; UE(2).state = 'newly_detected';
+UE(2).DOA = [double(az2); double(el2)];
+
+
+%% 4 Objects for the Estimation
 freeSpace = phased.FreeSpace('OperatingFrequency',Pars.fc, ...
     'SampleRate',Pars.Fsample, 'TwoWayPropagation', false);
 collector = phased.Collector('Sensor',Geometry.BSarray, ...
     'OperatingFrequency',Pars.fc);
-
-% Estimatore DOA (Root MUSIC è più stabile per ULA)
 doaEstimator = phased.RootMUSICEstimator(...
     'SensorArray',Geometry.BSarray, ...
     'OperatingFrequency',Pars.fc, ...
     'NumSignalsSource','Property', ...
-    'NumSignals',2); 
+    'NumSignals', numUsers); 
 
-%% 5. SETUP VISUALIZZAZIONE
-figure('Position',[100 100 1000 500]);
 
-% Plot Sinistro: Geometria
-subplot(1,2,1); 
+%% 5 Visualization
+figure('Position',[50 100 1400 500]);
+
+% Pannel 1: Geometry
+subplot(1,3,1); 
 hPlotGeo = plot(0,0,'k^','MarkerSize',10,'LineWidth',2,'DisplayName','BS'); hold on;
 hPlotV1 = plot(0,0,'bo','MarkerFaceColor','b','DisplayName','UE 1 (Target)');
 hPlotV2 = plot(0,0,'rs','MarkerFaceColor','r','DisplayName','UE 2 (Interferer)');
-% Scie traiettorie
 hTrail1 = animatedline('Color','b','LineStyle',':');
 hTrail2 = animatedline('Color','r','LineStyle',':');
-axis([-10 100 -20 80]); grid on; 
-xlabel('X (m)'); ylabel('Y (m)');
-title('Scenario V2X Dinamico'); legend('Location','northwest');
+axis([-10 100 -20 80]); grid on; title('Scenario V2X'); legend('Location','northwest');
 
-% Plot Destro: Diagramma di Radiazione
-subplot(1,2,2); 
-hPlotPat = polarplot(NaN, NaN, 'LineWidth', 2, 'Color', 'b'); 
-hold on;
-% Linee che indicano dove sono realmente i veicoli nel grafico polare
-hLineV1 = polarplot([0 0], [0 -40], 'b--'); 
-hLineV2 = polarplot([0 0], [0 -40], 'r--');
-title('Beamforming MVDR (su UE 1)'); 
-rlim([-40 0]); 
+% Pannel 2: Pattern UE 1 (Blu)
+subplot(1,3,2); 
+hPlotPat1 = polarplot(NaN, NaN, 'LineWidth', 2, 'Color', 'b'); hold on;
 
-disp('Avvio Simulazione...');
+hLineV1_p1 = polarplot([0 0], [0 -40], 'b--'); 
+% hLineV2_p1 = polarplot([0 0], [0 -40], 'r--');
+title('Beam UE 1 (Target: BLU)'); rlim([-40 0]);
 
-%% 6. LOOP DI SIMULAZIONE
-for iFrame = 1:Pars.numFrame
+% Pannel 3: Pattern UE 2 (Red)
+subplot(1,3,3); 
+hPlotPat2 = polarplot(NaN, NaN, 'LineWidth', 2, 'Color', 'r'); hold on;
+
+% hLineV1_p2 = polarplot([0 0], [0 -40], 'b--'); 
+hLineV2_p2 = polarplot([0 0], [0 -40], 'r--');
+title('Beam UE 2 (Target: RED)'); rlim([-40 0]);
+
+
+%% 6 LOOP
+for currentFrame = 1:Pars.numFrame
     
-    % --- A. AGGIORNAMENTO FISICA (Moto) ---
-    dt_sim = 0.1; % Passo temporale simulato
-    Geometry.V1Pos = Geometry.V1Pos + Geometry.V1Vel * dt_sim;
-    Geometry.V2Pos = Geometry.V2Pos + Geometry.V2Vel * dt_sim;
+    % MOVEMENT PHYSICS
+    Geometry.V1Pos = Geometry.V1Pos + Geometry.V1Vel * dt;
+    Geometry.V2Pos = Geometry.V2Pos + Geometry.V2Vel * dt;
     
-    % Calcolo angoli reali (Ground Truth per debug/grafica)
-    [az1_true, ~] = rangeangle(Geometry.V1Pos, Geometry.BSPos);
-    [az2_true, ~] = rangeangle(Geometry.V2Pos, Geometry.BSPos);
+    UE(1).pos = Geometry.V1Pos(:); UE(1).vel = Geometry.V1Vel(:);
+    UE(2).pos = Geometry.V2Pos(:); UE(2).vel = Geometry.V2Vel(:);
     
-    % --- B. GENERAZIONE SEGNALI ---
-    % Segnale che arriva alla BS
+    if Geometry.V1Pos(1) > 120, break; end
+
+    % SIGNALS
     sig1 = freeSpace(waveform1, Geometry.V1Pos, Geometry.BSPos, Geometry.V1Vel, [0;0;0]);
     sig2 = freeSpace(waveform2, Geometry.V2Pos, Geometry.BSPos, Geometry.V2Vel, [0;0;0]);
     
-    % Raccolta sull'array
-    ang_matrix = [az1_true, az2_true]; % Azimuth reali
-    rx_clean = collector([sig1, sig2], ang_matrix);
+    ang1 = rangeangle(Geometry.V1Pos, Geometry.BSPos);
+    ang2 = rangeangle(Geometry.V2Pos, Geometry.BSPos);
+    ang_matrix = [ang1, ang2];
     
-    % Aggiunta rumore termico
+    if size(ang_matrix, 1) == 1
+        ang_matrix = [ang_matrix; zeros(1, size(ang_matrix, 2))];
+    end
+    
+    ang_matrix(1,:) = mod(ang_matrix(1,:) + 180, 360) - 180;
+    ang_matrix(2,:) = max(min(ang_matrix(2,:), 90), -90);
+    
+    rx_clean = collector([sig1, sig2], ang_matrix);
     noise = 0.01 * (randn(size(rx_clean)) + 1i*randn(size(rx_clean)));
     rx_signal = rx_clean + noise;
     
-    % --- C. STIMA DOA ---
-    % MUSIC restituisce gli angoli ordinati per valore, non per utente
+    % PROCESSING
     estimated_doas = doaEstimator(rx_signal); 
     
-    % --- D. TRACKING (Data Association) ---
-    % Associa l'angolo stimato all'UE in base alla vicinanza col passo precedente
-    est_used = [false, false]; % flag per non assegnare lo stesso angolo a due utenti
-    
-    for k = 1:2
-        prev_az = UEs(k).DOA(1);
-        
-        % Cerca l'angolo non ancora usato più vicino a quello precedente
-        min_dist = Inf;
-        best_idx = -1;
+    est_used = [false, false];
+    for k = 1:numUsers
+        UE(k).DOA_prev = UE(k).DOA(:);
+        prev_az = UE(k).DOA(1);
+        min_dist = Inf; best_idx = -1;
         
         for j = 1:length(estimated_doas)
             dist = abs(estimated_doas(j) - prev_az);
-            % Gestione salto -180/180
             if dist > 180, dist = 360 - dist; end
-            
             if dist < min_dist && ~est_used(j)
                 min_dist = dist;
                 best_idx = j;
@@ -159,66 +178,70 @@ for iFrame = 1:Pars.numFrame
         end
         
         if best_idx ~= -1
-            UEs(k).DOA_prev = UEs(k).DOA;
-            UEs(k).DOA = [estimated_doas(best_idx); 0];
+            UE(k).DOA = [estimated_doas(best_idx); 0]; 
             est_used(best_idx) = true;
+            UE(k).state = 'tracking';
+        else
+            UE(k).state = 'lost';
         end
+        UE(k).DOA_variation = norm(UE(k).DOA(:)' - UE(k).DOA_prev(:));
+        UE(k).lifetime = UE(k).lifetime + 1;
     end
     
-    % --- E. BEAMFORMING MVDR ---
-    % 1. Calcolo matrice covarianza spaziale Rxx
+    % BEAMFORMING MVDR
     Rxx = (rx_signal' * rx_signal) / Pars.SnapshotsPerFrame;
-    % Diagonal loading (per stabilità numerica nell'inversione)
     Rxx = Rxx + 0.001 * eye(size(Rxx)); 
     R_inv = inv(Rxx);
     
-    for k = 1:length(UEs)
-        target_az = UEs(k).DOA(1);
+    for k = 1:numUsers
+        target_az = UE(k).DOA(1);
+        target_az = mod(target_az + 180, 360) - 180;
         
-        % Calcolo Steering Vector a(theta)
         sv = steeringVec(Pars.fc, [target_az; 0]);
         
-        % Calcolo Pesi MVDR: w = (R^-1 * a) / (a' * R^-1 * a)
         num = R_inv * sv;
         den = sv' * R_inv * sv;
-        w_mvdr = num / den;
+        UE(k).weights = num / den;
         
-        UEs(k).weights = w_mvdr;
-        
-        % Applicazione BF: y = w' * x
-        UEs(k).output = w_mvdr' * rx_signal.'; 
+        UE(k).output = UE(k).weights' * rx_signal.';
     end
     
-    % --- F. VISUALIZZAZIONE (Aggiornamento Dati) ---
-    
-    % 1. Aggiorna posizioni veicoli
+    % UPDATE THE VISUALIZATION
     set(hPlotV1, 'XData', Geometry.V1Pos(1), 'YData', Geometry.V1Pos(2));
     set(hPlotV2, 'XData', Geometry.V2Pos(1), 'YData', Geometry.V2Pos(2));
     addpoints(hTrail1, Geometry.V1Pos(1), Geometry.V1Pos(2));
     addpoints(hTrail2, Geometry.V2Pos(1), Geometry.V2Pos(2));
     
-    % 2. Calcolo manuale pattern (per velocità e stabilità)
-    if mod(iFrame, 2) == 0
-        % Definisci angoli di scansione
-        scan_az = -90:0.5:90; % Scansioniamo da -90 a 90 gradi
+    if mod(currentFrame, 2) == 0
+        % Scan Axis
+        scan_az = -90:0.5:90;
         sv_scan = steeringVec(Pars.fc, [scan_az; zeros(1, length(scan_az))]);
         
-        % Calcola risposta array per l'utente 1: P = |w' * a|^2
-        pattern_response = abs(UEs(1).weights' * sv_scan).^2;
-        pattern_dB = 10*log10(pattern_response + eps);
+        % Real Angles
+        t_az1 = ang_matrix(1,1);
+        t_az2 = ang_matrix(1,2);
         
-        % Normalizza a 0 dB il picco
-        pattern_dB = pattern_dB - max(pattern_dB);
+        % PATTERN UE 1
+        pat1 = abs(UE(1).weights' * sv_scan).^2;
+        pat1_dB = 10*log10(pat1 + eps);
+        pat1_dB = pat1_dB - max(pat1_dB);
         
-        % Aggiorna il grafico polare
-        set(hPlotPat, 'ThetaData', deg2rad(scan_az), 'RData', pattern_dB);
+        set(hPlotPat1, 'ThetaData', deg2rad(scan_az), 'RData', pat1_dB);
+
+        set(hLineV1_p1, 'ThetaData', [deg2rad(t_az1) deg2rad(t_az1)], 'RData', [0 -40]);
+        % set(hLineV2_p1, 'ThetaData', [deg2rad(t_az2) deg2rad(t_az2)], 'RData', [0 -40]);
+
+        % PATTERN UE 2
+        pat2 = abs(UE(2).weights' * sv_scan).^2;
+        pat2_dB = 10*log10(pat2 + eps);
+        pat2_dB = pat2_dB - max(pat2_dB);
         
-        % Aggiorna le linee tratteggiate che mostrano dove sono i veicoli
-        set(hLineV1, 'ThetaData', [deg2rad(az1_true) deg2rad(az1_true)], 'RData', [0 -40]);
-        set(hLineV2, 'ThetaData', [deg2rad(az2_true) deg2rad(az2_true)], 'RData', [0 -40]);
+        set(hPlotPat2, 'ThetaData', deg2rad(scan_az), 'RData', pat2_dB);
+
+        % set(hLineV1_p2, 'ThetaData', [deg2rad(t_az1) deg2rad(t_az1)], 'RData', [0 -40]);
+        set(hLineV2_p2, 'ThetaData', [deg2rad(t_az2) deg2rad(t_az2)], 'RData', [0 -40]);
         
-        drawnow limitrate; 
+        drawnow limitrate;
+        pause(Pars.PhysicsStep / 2);
     end
 end
-
-disp('Simulazione Completata.');
