@@ -18,7 +18,7 @@ UE = struct( ...
     'weights',          [], ...          % MVDR or other BF weights
     'output',           [], ...          % BF output signal for this UE
     ...
-    'state',            'idle')      % idle, tracking, lost, newly_detected
+    'state',            'idle');      % idle, tracking, lost, newly_detected
 
 %% Parameters
 Pars.fc = 1e9; %Hz
