@@ -30,8 +30,9 @@ Pars.PhysicsStep = 0.05;
 Pars.numFrame = ceil(Pars.TotalTime_s / Pars.PhysicsStep);
 dt = Pars.PhysicsStep;
 
-% SNR control
-Pars.SNR_dB = 10;
+% Noise parameters
+Pars.Temp_ant = 293.15; %in Kelvin
+Pars.NoiseFactor = 5; %in dB
 
 % Vehicles parameters
 Pars.speed1_kmh = 7;
@@ -50,15 +51,15 @@ SINR_UE2 = zeros(Pars.numFrame, 1);
 SINR_UE2_dB = zeros(Pars.numFrame, 1);
 
 %% 2) Geometry + Array
-N_Elements = 16;
+N_Elements = 8;
 Geometry.BSarray = phased.ULA('NumElements', N_Elements, ...
     'ElementSpacing', Pars.lambda/2);
 
 Geometry.BSPos = [0; 0; 0];
-Geometry.V1Pos = [20; -20; 0];
+Geometry.V1Pos = [10; 30; 0];
 Geometry.V2Pos = [20;  20; 0];
 
-dir1 = [-0.3; 0.5; 0]; dir1 = dir1/norm(dir1);
+dir1 = [0.5; -1; 0]; dir1 = dir1/norm(dir1);
 dir2 = [0.5; -1; 0]; dir2 = dir2/norm(dir2);
 Geometry.V1Vel = Pars.v1_ms * dir1;
 Geometry.V2Vel = Pars.v2_ms * dir2;
@@ -75,7 +76,7 @@ UE_template = struct( ...
     'DOA',              [0; 0], ...
     'DOA_prev',         [0; 0], ...
     'DOA_variation',    0, ...
-    'SNR',              NaN, ...
+    'SINR',              NaN, ...
     'power',            NaN, ...
     'lastUpdate',       0, ...
     'nextUpdate',       0, ...
@@ -152,6 +153,12 @@ StoredData.UE2_weights = zeros(N_Elements, Pars.numFrame);
 StoredData.ang_matrix = zeros(2, 2, Pars.numFrame);
 StoredData.validFrames = 0;
 
+
+%% 6.1) Noise power computation
+%B = 1kHz
+% 10log10(kT0) = -174 dBm/Hz with T0 = 293.15 °K
+%-30 to convert from dBm to dB
+Pars.sigma2 = db2pow(-174 + 10*log10(Pars.Temp_ant/293.15) + 10*log10(1e5)-30 + Pars.NoiseFactor);
 %% 7) MAIN LOOP
 scan_az = -90:0.5:90;
 sv_scan = steeringVec(Pars.fc, [scan_az; zeros(1, numel(scan_az))]);
@@ -191,11 +198,8 @@ for currentFrame = 1:Pars.numFrame
     rx_clean = collector([sig1, sig2], ang_matrix);
 
     %% (c) Add AWGN based on target SNR
-    SNRlin = 10^(Pars.SNR_dB/10);
-    Px = mean(abs(rx_clean(:)).^2);
-    sigma2 = Px / SNRlin;
 
-    noise = sqrt(sigma2/2) * (randn(size(rx_clean)) + 1j*randn(size(rx_clean)));
+    noise = sqrt(Pars.sigma2/2) * (randn(size(rx_clean)) + 1j*randn(size(rx_clean)));
     rx_signal = rx_clean + noise;
 
     %% (d) Estimate number of UEs via MDL (per frame)
@@ -233,7 +237,6 @@ for currentFrame = 1:Pars.numFrame
 
         UE(k).DOA_variation = norm(UE(k).DOA(:) - UE(k).DOA_prev(:));
         UE(k).lifetime = UE(k).lifetime + 1;
-        UE(k).SNR = Pars.SNR_dB;
     end
 
     %% (f) MVDR beamforming (only for active UEs)
@@ -271,14 +274,14 @@ for currentFrame = 1:Pars.numFrame
         rx_sig1 = collector(sig1, ang_matrix(:,1))';
         rx_sig2 = collector(sig2, ang_matrix(:,2))';
         % Signal power for UE1 (already calculated)
-        P_signal_UE1 = mean( abs(UE(1).weights') * abs(rx_sig1 ) ).^2;
-        
+        P_signal_UE1 = mean( (abs(UE(1).weights') * abs(rx_sig1)).^2 );
+
         % Interference from UE2 on UE1's beam
-        P_interference_UE1 = mean( (abs(UE(1).weights') * abs(rx_sig2) ) ).^2;
-        
+        P_interference_UE1 = mean( (abs(UE(1).weights') * abs(rx_sig2)).^2 );
+
         % Noise power after beamforming
-        P_noise_UE1 = sigma2 * (UE(1).weights' * UE(1).weights);
-        
+        P_noise_UE1 = Pars.sigma2 * (UE(1).weights' * UE(1).weights);
+
         % SINR
         SINR_UE1(currentFrame) = P_signal_UE1 / (P_interference_UE1 + P_noise_UE1);
         SINR_UE1_dB(currentFrame) = 10*log10(SINR_UE1(currentFrame));
@@ -291,14 +294,14 @@ for currentFrame = 1:Pars.numFrame
         rx_sig1 = collector(sig1, ang_matrix(:,1))';
         rx_sig2 = collector(sig2, ang_matrix(:,2))';
         % Signal power for UE2 (already calculated)
-        P_signal_UE2 = mean( abs(UE(2).weights') * abs(rx_sig2 ) ).^2;
-        
+        P_signal_UE2 = mean( (abs(UE(2).weights')*abs(rx_sig2)).^2 );
+
         % Interference from UE1 on UE2's beam
-        P_interference_UE2 = mean( (abs(UE(2).weights') * abs(rx_sig1) ) ).^2;
-        
+        P_interference_UE2 = mean( (abs(UE(2).weights') * abs(rx_sig1)).^2 );
+
         % Noise power after beamforming
-        P_noise_UE2 = sigma2 * (UE(2).weights' * UE(2).weights);
-        
+        P_noise_UE2 = Pars.sigma2 * (UE(2).weights' * UE(2).weights);
+
         % SINR
         SINR_UE2(currentFrame) = P_signal_UE2 / (P_interference_UE2 + P_noise_UE2);
         SINR_UE2_dB(currentFrame) = 10*log10(SINR_UE2(currentFrame));
