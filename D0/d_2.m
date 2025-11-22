@@ -117,7 +117,7 @@ hPlotPat1 = polarplot(NaN, NaN, 'LineWidth', 2, 'Color', 'b'); hold on;
 
 hLineV1_p1 = polarplot([0 0], [0 -40], 'b--'); 
 % hLineV2_p1 = polarplot([0 0], [0 -40], 'r--');
-title('Beam UE 1 (Target: BLU)'); rlim([-40 0]);
+title('Beam UE 1 (Target: BLUE)'); rlim([-40 0]);
 
 % Pannel 3: Pattern UE 2 (Red)
 subplot(1,3,3); 
