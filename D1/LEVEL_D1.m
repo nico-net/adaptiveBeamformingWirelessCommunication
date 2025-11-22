@@ -8,7 +8,7 @@ clc;
 %%  - UE struct extended
 %%  - Per-frame estimation of number of UEs (MDL)
 %%  - DOA known from geometry (NO Root-MUSIC)
-%%  - MVDR beamforming
+%%  - LMS beamforming
 %%  - Updated visualization layout
 %% ============================================================
 
@@ -40,8 +40,8 @@ Pars.v1_ms = Pars.speed1_kmh * (1000/3600);
 Pars.v2_ms = Pars.speed2_kmh * (1000/3600);
 
 % Waveforms
-waveform1 = sin(2*pi*Pars.Fsin*Pars.TsVect).';
-waveform2 = sign(sin(2*pi*Pars.Fsin*Pars.TsVect + pi/3)).';
+waveform1 = exp(1j*(2*pi*600*Pars.TsVect + pi/6)).';        % complex tone 600 Hz
+waveform2 = exp(1j*(2*pi*800*Pars.TsVect + pi/3)).';        % different freq 800 Hz
 
 
 
@@ -57,11 +57,13 @@ Geometry.BSarray = phased.ULA('NumElements', N_Elements, ...
     'ElementSpacing', Pars.lambda/2);
 
 Geometry.BSPos = [0; 0; 0];
-Geometry.V1Pos = [20; -20; 0];
-Geometry.V2Pos = [20;  20; 0];
+Geometry.V2Pos = [40; -20; 0];
+Geometry.V1Pos = [20;  20; 0];
 
-dir1 = [0; 0.5; 0]; dir1 = dir1/norm(dir1);
-dir2 = [0; -1; 0]; dir2 = dir2/norm(dir2);
+dir2 = [1; 0.5; 0]; 
+dir1 = [0.5; -1; 0]; 
+dir2 = dir2/norm(dir2);
+dir1 = dir1/norm(dir1);
 Geometry.V1Vel = Pars.v1_ms * dir1;
 Geometry.V2Vel = Pars.v2_ms * dir2;
 
@@ -306,9 +308,6 @@ for currentFrame = 1:Pars.numFrame
             end
         end
         
-        % figure;
-        % plot(error_array)
-        % pause();
 
         % Store updated weights
         UE(k).weights_lms = w_lms;
@@ -401,10 +400,10 @@ for currentFrame = 1:Pars.numFrame
         rx_sig1 = collector(sig1, ang_matrix(:,1))';
         rx_sig2 = collector(sig2, ang_matrix(:,2))';
         % Signal power for UE1 (already calculated)
-        P_signal_UE1 = mean( abs(UE(1).weights') * abs(rx_sig1 ) ).^2;
+        P_signal_UE1 = mean( (abs(UE(1).weights') * abs(rx_sig1 )).^2 );
 
         % Interference from UE2 on UE1's beam
-        P_interference_UE1 = mean( (abs(UE(1).weights') * abs(rx_sig2) ) ).^2;
+        P_interference_UE1 = mean( (abs(UE(1).weights') * abs(rx_sig2) ).^2 );
 
         % Noise power after beamforming
         P_noise_UE1 = sigma2 * (UE(1).weights' * UE(1).weights);
@@ -421,10 +420,10 @@ for currentFrame = 1:Pars.numFrame
         rx_sig1 = collector(sig1, ang_matrix(:,1))';
         rx_sig2 = collector(sig2, ang_matrix(:,2))';
         % Signal power for UE2 (already calculated)
-        P_signal_UE2 = mean( abs(UE(2).weights') * abs(rx_sig2 ) ).^2;
+        P_signal_UE2 = mean( (abs(UE(2).weights') * abs(rx_sig2 )).^2 );
 
         % Interference from UE1 on UE2's beam
-        P_interference_UE2 = mean( (abs(UE(2).weights') * abs(rx_sig1) ) ).^2;
+        P_interference_UE2 = mean( (abs(UE(2).weights') * abs(rx_sig1) ).^2 );
 
         % Noise power after beamforming
         P_noise_UE2 = sigma2 * (UE(2).weights' * UE(2).weights);
