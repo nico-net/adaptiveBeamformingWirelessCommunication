@@ -60,8 +60,8 @@ Geometry.BSPos = [0; 0; 0];
 Geometry.V2Pos = [40; -20; 0];
 Geometry.V1Pos = [20;  20; 0];
 
-dir2 = [1; 0.5; 0]; 
-dir1 = [0.5; -1; 0]; 
+dir2 = [0; 0.5; 0]; 
+dir1 = [0; -1; 0]; 
 dir2 = dir2/norm(dir2);
 dir1 = dir1/norm(dir1);
 Geometry.V1Vel = Pars.v1_ms * dir1;
@@ -118,6 +118,7 @@ collector = phased.Collector('Sensor', Geometry.BSarray, ...
 %% 5) Visualization (Updated Layout from d_3.m)
 fig = figure;
 set(fig, 'WindowState', 'maximized');
+sgtitle('D1 - LMS, friis, DoA')
 
 % Top row: Scenario map
 subplot(2,4,[1 2]);
@@ -265,7 +266,7 @@ for currentFrame = 1:Pars.numFrame
 
     % Calculate adaptive step size based on input power
     Rxx = (rx_signal * rx_signal') / Nsnap;
-    mu = 1 / (real(trace(Rxx))); % step size
+    mu = 0.1 / (real(trace(Rxx))); % step size
 
     for k = 1:maxUsers
         if ~UE(k).active
@@ -608,4 +609,5 @@ function updatePlots(src, ~)
     
     drawnow;
 end
+
 
