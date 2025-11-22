@@ -363,7 +363,6 @@ for currentFrame = 1:Pars.numFrame
 end
 
 %% 8) Post-simulation: Add time slider for replay
-% Trim stored data to actual frames
 totalFrames = StoredData.validFrames;
 StoredData.V1Pos = StoredData.V1Pos(:, 1:totalFrames);
 StoredData.V2Pos = StoredData.V2Pos(:, 1:totalFrames);
@@ -371,6 +370,7 @@ StoredData.UE1_weights = StoredData.UE1_weights(:, 1:totalFrames);
 StoredData.UE2_weights = StoredData.UE2_weights(:, 1:totalFrames);
 StoredData.ang_matrix = StoredData.ang_matrix(:, :, 1:totalFrames);
 SINR_UE1_dB = SINR_UE1_dB(1:totalFrames);
+SINR_UE2_dB = SINR_UE2_dB(1:totalFrames);
 
 % Add slider to the figure
 sliderPanel = uipanel(fig, 'Position', [0.05 0.01 0.9 0.05], 'BorderType', 'none');
@@ -385,76 +385,103 @@ timeLabel = uicontrol(sliderPanel, 'Style', 'text', ...
     'String', sprintf('t = %.2f s', totalFrames*Pars.PhysicsStep), ...
     'FontSize', 10, 'HorizontalAlignment', 'left');
 
-% Slider callback function
-timeSlider.Callback = @(src, event) updatePlots(src.Value);
+% Prepare all data needed for callback
+sliderData.totalFrames = totalFrames;
+sliderData.StoredData = StoredData;
+sliderData.Pars = Pars;
+sliderData.SINR_UE1_dB = SINR_UE1_dB;
+sliderData.SINR_UE2_dB = SINR_UE2_dB;
+sliderData.sv_scan = sv_scan;
+sliderData.scan_az = scan_az;
+sliderData.hPlotV1 = hPlotV1;
+sliderData.hPlotV2 = hPlotV2;
+sliderData.hTrail1 = hTrail1;
+sliderData.hTrail2 = hTrail2;
+sliderData.timeLabel = timeLabel;
+sliderData.hPlotPat1 = hPlotPat1;
+sliderData.hPlotPat2 = hPlotPat2;
+sliderData.hPlotPatTotal = hPlotPatTotal;
+sliderData.hLineV1_p1 = hLineV1_p1;
+sliderData.hLineV2_p2 = hLineV2_p2;
+sliderData.hLineV1_total = hLineV1_total;
+sliderData.hLineV2_total = hLineV2_total;
 
-    function updatePlots(frameIdx)
-        frameIdx = round(frameIdx);
-        if frameIdx < 1, frameIdx = 1; end
-        if frameIdx > totalFrames, frameIdx = totalFrames; end
-        
-        % Update time label
-        currentTime = frameIdx * Pars.PhysicsStep;
-        set(timeLabel, 'String', sprintf('t = %.2f s', currentTime));
-        
-        % Update vehicle positions
-        V1Pos_replay = StoredData.V1Pos(:, frameIdx);
-        V2Pos_replay = StoredData.V2Pos(:, frameIdx);
-        set(hPlotV1, 'XData', V1Pos_replay(1), 'YData', V1Pos_replay(2));
-        set(hPlotV2, 'XData', V2Pos_replay(1), 'YData', V2Pos_replay(2));
-        
-        % Update trails
-        clearpoints(hTrail1);
-        clearpoints(hTrail2);
-        for k = 1:frameIdx
-            addpoints(hTrail1, StoredData.V1Pos(1,k), StoredData.V1Pos(2,k));
-            addpoints(hTrail2, StoredData.V2Pos(1,k), StoredData.V2Pos(2,k));
-        end
-        
-        % Update SINR plot - highlight current point
-        time_axis = (1:totalFrames) * Pars.PhysicsStep;
-        subplot(2,4,[3 4]); cla; hold on;
-        plot(time_axis, SINR_UE1_dB, 'b-', 'LineWidth', 1.5);
-        plot(currentTime, SINR_UE1_dB(frameIdx), 'ro', 'MarkerSize', 8, 'MarkerFaceColor', 'r');
-        grid on;
-        xlabel('Time [s]');
-        ylabel('SINR [dB]');
-        title('SINR of UE1 vs Time');
-        xlim([0 Pars.TotalTime_s]);
-        ylim([-10 30]);
-        
-        % Update beam patterns
-        w1 = StoredData.UE1_weights(:, frameIdx);
-        w2 = StoredData.UE2_weights(:, frameIdx);
-        ang_matrix_replay = StoredData.ang_matrix(:, :, frameIdx);
-        
-        % Pattern UE 1
-        pat1 = abs(w1' * sv_scan).^2;
-        pat1_dB = 10*log10(pat1 + eps);
-        pat1_dB = pat1_dB - max(pat1_dB);
-        set(hPlotPat1, 'ThetaData', deg2rad(scan_az), 'RData', pat1_dB);
-        
-        % Pattern UE 2
-        pat2 = abs(w2' * sv_scan).^2;
-        pat2_dB = 10*log10(pat2 + eps);
-        pat2_dB = pat2_dB - max(pat2_dB);
-        set(hPlotPat2, 'ThetaData', deg2rad(scan_az), 'RData', pat2_dB);
-        
-        % Combined Pattern
-        pat_total = pat1 + pat2;
-        pat_total_dB = 10*log10(pat_total + eps);
-        pat_total_dB = pat_total_dB - max(pat_total_dB);
-        set(hPlotPatTotal, 'ThetaData', deg2rad(scan_az), 'RData', pat_total_dB);
-        
-        % Update angle lines
-        t_az1 = ang_matrix_replay(1,1);
-        t_az2 = ang_matrix_replay(1,2);
-        set(hLineV1_p1, 'ThetaData', [deg2rad(t_az1) deg2rad(t_az1)], 'RData', [0 -40]);
-        set(hLineV2_p2, 'ThetaData', [deg2rad(t_az2) deg2rad(t_az2)], 'RData', [0 -40]);
-        set(hLineV1_total, 'ThetaData', [deg2rad(t_az1) deg2rad(t_az1)], 'RData', [0 -40]);
-        set(hLineV2_total, 'ThetaData', [deg2rad(t_az2) deg2rad(t_az2)], 'RData', [0 -40]);
-        
-        drawnow;
+timeSlider.UserData = sliderData;
+timeSlider.Callback = @updatePlots;
+
+fprintf('Simulazione completata. Usa lo slider per ripercorrere la simulazione.\n');
+
+%% Nested function for slider callback
+function updatePlots(src, ~)
+    data = src.UserData;
+    frameIdx = round(src.Value);
+    if frameIdx < 1, frameIdx = 1; end
+    if frameIdx > data.totalFrames, frameIdx = data.totalFrames; end
+    
+    % Update time label
+    currentTime = frameIdx * data.Pars.PhysicsStep;
+    set(data.timeLabel, 'String', sprintf('t = %.2f s', currentTime));
+    
+    % Update vehicle positions
+    V1Pos_replay = data.StoredData.V1Pos(:, frameIdx);
+    V2Pos_replay = data.StoredData.V2Pos(:, frameIdx);
+    set(data.hPlotV1, 'XData', V1Pos_replay(1), 'YData', V1Pos_replay(2));
+    set(data.hPlotV2, 'XData', V2Pos_replay(1), 'YData', V2Pos_replay(2));
+    
+    % Update trails
+    clearpoints(data.hTrail1);
+    clearpoints(data.hTrail2);
+    for k = 1:frameIdx
+        addpoints(data.hTrail1, data.StoredData.V1Pos(1,k), data.StoredData.V1Pos(2,k));
+        addpoints(data.hTrail2, data.StoredData.V2Pos(1,k), data.StoredData.V2Pos(2,k));
     end
+    
+    % Update SINR plot
+    time_axis = (1:data.totalFrames) * data.Pars.PhysicsStep;
+    subplot(2,4,[3 4]); cla; hold on;
+    plot(time_axis, data.SINR_UE1_dB, 'b-', 'LineWidth', 1.5);
+    plot(time_axis, data.SINR_UE2_dB, 'r-', 'LineWidth', 1.5);
+    plot(currentTime, data.SINR_UE1_dB(frameIdx), 'bo', 'MarkerSize', 8, 'MarkerFaceColor', 'b');
+    plot(currentTime, data.SINR_UE2_dB(frameIdx), 'ro', 'MarkerSize', 8, 'MarkerFaceColor', 'r');
+    grid on;
+    xlabel('Time [s]');
+    ylabel('SINR [dB]');
+    title('SINR of UE1 and UE2 vs Time');
+    xlim([0 data.Pars.TotalTime_s]);
+    ylim([-10 30]);
+    
+    % Update beam patterns
+    w1 = data.StoredData.UE1_weights(:, frameIdx);
+    w2 = data.StoredData.UE2_weights(:, frameIdx);
+    ang_matrix_replay = data.StoredData.ang_matrix(:, :, frameIdx);
+    
+    % Pattern UE 1
+    pat1 = abs(w1' * data.sv_scan).^2;
+    pat1_dB = 10*log10(pat1 + eps);
+    pat1_dB = pat1_dB - max(pat1_dB);
+    set(data.hPlotPat1, 'ThetaData', deg2rad(data.scan_az), 'RData', pat1_dB);
+    
+    % Pattern UE 2
+    pat2 = abs(w2' * data.sv_scan).^2;
+    pat2_dB = 10*log10(pat2 + eps);
+    pat2_dB = pat2_dB - max(pat2_dB);
+    set(data.hPlotPat2, 'ThetaData', deg2rad(data.scan_az), 'RData', pat2_dB);
+    
+    % Combined Pattern
+    pat_total = pat1 + pat2;
+    pat_total_dB = 10*log10(pat_total + eps);
+    pat_total_dB = pat_total_dB - max(pat_total_dB);
+    set(data.hPlotPatTotal, 'ThetaData', deg2rad(data.scan_az), 'RData', pat_total_dB);
+    
+    % Update angle lines
+    t_az1 = ang_matrix_replay(1,1);
+    t_az2 = ang_matrix_replay(1,2);
+    set(data.hLineV1_p1, 'ThetaData', [deg2rad(t_az1) deg2rad(t_az1)], 'RData', [0 -40]);
+    set(data.hLineV2_p2, 'ThetaData', [deg2rad(t_az2) deg2rad(t_az2)], 'RData', [0 -40]);
+    set(data.hLineV1_total, 'ThetaData', [deg2rad(t_az1) deg2rad(t_az1)], 'RData', [0 -40]);
+    set(data.hLineV2_total, 'ThetaData', [deg2rad(t_az2) deg2rad(t_az2)], 'RData', [0 -40]);
+    
+    drawnow;
+end
 
 fprintf('Simulazione completata. Usa lo slider per ripercorrere la simulazione.\n');
