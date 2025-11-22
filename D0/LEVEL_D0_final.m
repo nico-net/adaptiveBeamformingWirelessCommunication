@@ -486,5 +486,3 @@ function updatePlots(src, ~)
     
     drawnow;
 end
-
-fprintf('Simulazione completata. Usa lo slider per ripercorrere la simulazione.\n');
