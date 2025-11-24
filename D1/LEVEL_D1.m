@@ -6,8 +6,8 @@ clc;
 %%  SCRIPT (DOA note dalla geometria)
 %%  - Vehicles in movement
 %%  - UE struct extended
-%%  - Per-frame estimation of number of UEs (MDL)
-%%  - DOA known from geometry (NO Root-MUSIC)
+%%  - Per-frame estimation of number of UEs
+%%  - DOA known from geometry
 %%  - LMS beamforming
 %%  - Updated visualization layout
 %% ============================================================
@@ -30,19 +30,20 @@ Pars.PhysicsStep = 0.05;
 Pars.numFrame = ceil(Pars.TotalTime_s / Pars.PhysicsStep);
 dt = Pars.PhysicsStep;
 
-% SNR control
-Pars.SNR_dB = 10;
+% Noise parameters
+Pars.Temp_ant = 293.15; %in Kelvin
+Pars.NoiseFactor = 5; %in dB
+
 
 % Vehicles parameters
-Pars.speed1_kmh = 7;
-Pars.speed2_kmh = 5;
+Pars.speed1_kmh = 40;
+Pars.speed2_kmh = 9;
 Pars.v1_ms = Pars.speed1_kmh * (1000/3600);
 Pars.v2_ms = Pars.speed2_kmh * (1000/3600);
 
 % Waveforms
-waveform1 = exp(1j*(2*pi*600*Pars.TsVect + pi/6)).';        % complex tone 600 Hz
-waveform2 = exp(1j*(2*pi*800*Pars.TsVect + pi/3)).';        % different freq 800 Hz
-
+waveform1 = exp(1j*(2*pi*(Pars.fc)*Pars.TsVect + pi/6)).';        
+waveform2 = exp(1j*(2*pi*(Pars.fc + 1e3)*Pars.TsVect + pi/3)).';       
 
 
 %SNRs
@@ -52,13 +53,13 @@ SINR_UE2 = zeros(Pars.numFrame, 1);
 SINR_UE2_dB = zeros(Pars.numFrame, 1);
 
 %% 2) Geometry + Array
-N_Elements = 16;
+N_Elements = 6;   %Number of antennas
 Geometry.BSarray = phased.ULA('NumElements', N_Elements, ...
     'ElementSpacing', Pars.lambda/2);
 
 Geometry.BSPos = [0; 0; 0];
 Geometry.V2Pos = [40; -20; 0];
-Geometry.V1Pos = [20;  20; 0];
+Geometry.V1Pos = [20;  60; 0];
 
 dir2 = [0; 0.5; 0]; 
 dir1 = [0; -1; 0]; 
@@ -96,17 +97,6 @@ for k = 1:maxUsers
 end
 
 
-%% Add to initialization section LMS
-% LMS Parameters
-LMS.samples_per_update = 50; % Update weights every N samples
-
-% Initialize LMS weights for each UE
-for k = 1:maxUsers
-    UE(k).weights_lms = ones(N_Elements, 1) / N_Elements; % Start uniform
-    UE(k).lms_error = [];
-    UE(k).lms_converged = false;
-end
-
 %% 4) Objects for channel & reception
 freeSpace = phased.FreeSpace('OperatingFrequency', Pars.fc, ...
     'SampleRate', Pars.Fsample, ...
@@ -128,8 +118,8 @@ hPlotV1 = plot(Geometry.V1Pos(1), Geometry.V1Pos(2), 'bo', ...
     'MarkerFaceColor','b','DisplayName','UE 1');
 hPlotV2 = plot(Geometry.V2Pos(1), Geometry.V2Pos(2), 'rs', ...
     'MarkerFaceColor','r','DisplayName','UE 2');
-hTrail1 = animatedline('Color','b','LineStyle',':');
-hTrail2 = animatedline('Color','r','LineStyle',':');
+hTrail1 = animatedline('Color','b','LineStyle',':', 'DisplayName', "UE1's trajectory");
+hTrail2 = animatedline('Color','r','LineStyle',':', 'DisplayName', "UE2's trajectory");
 axis([-40 80 -50 50]); grid on; title('Scenario V2X'); legend('Location','northwest');
 
 % Top row: SINR plot
@@ -147,18 +137,18 @@ ylim([-10 30]); % Adjust based on expected SINR range
 subplot(2,4,5);
 hPlotPat1 = polarplot(NaN, NaN, 'LineWidth', 2, 'Color', 'b'); hold on;
 hLineV1_p1 = polarplot([0 0], [0 -40], 'b--');
-title('Beam UE 1 (BLU)'); rlim([-40 0]);
+title('Beam UE 1'); rlim([-40 0]);
 
 subplot(2,4,6);
 hPlotPat2 = polarplot(NaN, NaN, 'LineWidth', 2, 'Color', 'r'); hold on;
 hLineV2_p2 = polarplot([0 0], [0 -40], 'r--');
-title('Beam UE 2 (RED)'); rlim([-40 0]);
+title('Beam UE 2'); rlim([-40 0]);
 
 subplot(2,4,7);
 hPlotPatTotal = polarplot(NaN, NaN, 'LineWidth', 2, 'Color', 'm'); hold on;
 hLineV1_total = polarplot([0 0], [0 -40], 'b--');
 hLineV2_total = polarplot([0 0], [0 -40], 'r--');
-title('Combined Pattern (MAGENTA)'); rlim([-40 0]);
+title('Combined Pattern'); rlim([-40 0]);
 
 %% 6) Storage for replay
 % Preallocate storage arrays
@@ -168,6 +158,14 @@ StoredData.UE1_weights = zeros(N_Elements, Pars.numFrame);
 StoredData.UE2_weights = zeros(N_Elements, Pars.numFrame);
 StoredData.ang_matrix = zeros(2, 2, Pars.numFrame);
 StoredData.validFrames = 0;
+StoredData.didUpdate = false(1, Pars.numFrame);
+
+
+%% 6.1) Noise power computation
+%B = 1kHz
+% 10log10(kT0) = -174 dBm/Hz with T0 = 293.15 °K
+%-30 to convert from dBm to dB
+Pars.sigma2 = db2pow(-174 + 10*log10(Pars.Temp_ant/293.15) + 10*log10(1e5)-30 + Pars.NoiseFactor);
 
 %% 7) MAIN LOOP
 scan_az = -90:0.5:90;
@@ -208,11 +206,8 @@ for currentFrame = 1:Pars.numFrame
     rx_clean = collector([sig1, sig2], ang_matrix);
 
     %% (c) Add AWGN based on target SNR
-    SNRlin = 10^(Pars.SNR_dB/10);
-    Px = mean(abs(rx_clean(:)).^2);
-    sigma2 = Px / SNRlin;
 
-    noise = sqrt(sigma2/2) * (randn(size(rx_clean)) + 1j*randn(size(rx_clean)));
+    noise = sqrt(Pars.sigma2/2) * (randn(size(rx_clean)) + 1j*randn(size(rx_clean)));
     rx_signal = rx_clean + noise;
 
     %% (d) Estimate number of UEs via MDL (per frame)
@@ -236,8 +231,6 @@ for currentFrame = 1:Pars.numFrame
 
     %% (e) DOA known from geometry -> update UEs
     for k = 1:maxUsers
-        UE(k).DOA_prev = UE(k).DOA(:);
-
         if k > numUsers_est
             UE(k).active = false;
             UE(k).state  = 'lost';
@@ -250,151 +243,46 @@ for currentFrame = 1:Pars.numFrame
 
         UE(k).DOA_variation = norm(UE(k).DOA(:) - UE(k).DOA_prev(:));
         UE(k).lifetime = UE(k).lifetime + 1;
-        UE(k).SNR = Pars.SNR_dB;
     end
-
-    %% LMS
-
-    % LMS-based Adaptive Beamforming for V2X Scenario
 
     %% (f) LMS Adaptive Beamforming
-    % Ensure rx_signal is Nelem x Nsnap
-    if size(rx_signal,1) ~= N_Elements
-        rx_signal = rx_signal.';
-    end
-    Nsnap = size(rx_signal,2);
+    didUpdateNow = false;
+    if UE(k).DOA_variation > 2
+        didUpdateNow = true;
 
-    % Calculate adaptive step size based on input power
-    Rxx = (rx_signal * rx_signal') / Nsnap;
-    mu = 0.1 / (real(trace(Rxx))); % step size
-
-    for k = 1:maxUsers
-        if ~UE(k).active
-            UE(k).weights_lms = ones(N_Elements,1)/N_Elements;
-            UE(k).output  = zeros(1, Nsnap);
-            continue;
-        end
-
-        % Reference signal (desired signal from known direction)
-        % Using waveform1 or waveform2 based on UE id
-        if k == 1
-            d_ref = waveform1; % Reference for UE1
-        else
-            d_ref = waveform2; % Reference for UE2
-        end
-
-        % LMS Algorithm - iterate through snapshots
-        w_lms = UE(k).weights_lms; % Start from previous weights
-        error_array = zeros(1, Nsnap);
-
-        % Process in mini-batches for efficiency
-        update_interval = LMS.samples_per_update;
-
-        for n = 1:Nsnap
-            % Current input vector
-            x_n = rx_signal(:, n);
-
-            % Beamformer output
-            y_n = w_lms' * x_n;
-
-            % Error signal (actual - desired)
-            e_n = y_n - conj(d_ref(n));
-            error_array(n) = abs(e_n);
-
-            % LMS weight update every 'update_interval' samples
-            if mod(n, update_interval) == 0 || n == Nsnap
-                w_lms = w_lms - mu * conj(e_n) * x_n;
-                % Normalize to prevent numerical issues
-                w_lms = w_lms / norm(w_lms);
-            end
+        UE(k).DOA_prev = UE(k).DOA(:);
+        [N, L] = size(rx_signal);
+        
+        for k = 1:maxUsers
+            UE(k).weights = zeros(L,1);    % spatial weights init
         end
         
-
-        % Store updated weights
-        UE(k).weights_lms = w_lms;
-        UE(k).weights = w_lms; % For compatibility with visualization
-
-        % Final beamformed output
-        UE(k).output = w_lms' * rx_signal;
-        UE(k).power = mean(abs(UE(k).output).^2);
-
-        % Store mean squared error for monitoring
-        UE(k).lms_error = [UE(k).lms_error, mean(error_array.^2)];
-
-        % % Check convergence (optional)
-        % if length(UE(k).lms_error) > 10
-        %     recent_error = UE(k).lms_error(end-9:end);
-        %     if std(recent_error) < 0.01 * mean(recent_error)
-        %         UE(k).lms_converged = true;
-        %     end
-        % end
+        for k = 1:maxUsers
+            if ~UE(k).active
+                continue; 
+            end
+        
+            d_desired = (k==1)*waveform1 + (k~=1)*waveform2;
+        
+            w = UE(k).weights;
+            y_out = zeros(N,1);
+            e_out = zeros(N,1);
+        
+            for n = 1:N
+                x = rx_signal(n,:).';
+                mu = trace(x*x');   % adaptive weights
+                y_out(n) = w' * x;             % beamformed output
+                e_out(n) = -d_desired(n) + y_out(n);  % error
+                w = w - mu * x * conj(e_out(n));  %update of the weights
+            end
+        
+            UE(k).weights = w;
+            UE(k).output  = y_out.';
+            UE(k).power   = mean(abs(y_out).^2);
+        end
     end
 
-    %% Add optional LMS monitoring plot (add to visualization section):
-    % Add after existing subplots, e.g., as subplot(2,4,8)
-    subplot(2,4,8);
-    if currentFrame == 1
-        hLMSerror1 = semilogy(NaN, NaN, 'b-', 'LineWidth', 1.5); hold on;
-        hLMSerror2 = semilogy(NaN, NaN, 'r-', 'LineWidth', 1.5);
-        grid on;
-        xlabel('Frame');
-        ylabel('MSE');
-        title('LMS Convergence');
-        legend('UE1', 'UE2');
-        ylim([1e-6 1e0]);
-    end
-
-    if ~isempty(UE(1).lms_error)
-        set(hLMSerror1, 'XData', 1:length(UE(1).lms_error), ...
-            'YData', UE(1).lms_error);
-    end
-    if ~isempty(UE(2).lms_error)
-        set(hLMSerror2, 'XData', 1:length(UE(2).lms_error), ...
-            'YData', UE(2).lms_error);
-    end
-
-    %% Alternative: Using MATLAB's built-in LMS filter (if DSP Toolbox available)
-    % Uncomment to use MATLAB's dsp.LMSFilter:
-
-    % % Create LMS filter object (do this in initialization)
-    % for k = 1:maxUsers
-    %     UE(k).lmsFilter = dsp.LMSFilter(N_Elements, 'StepSize', 0.01);
-    % end
-    %
-    % % In the beamforming section:
-    % for k = 1:maxUsers
-    %     if ~UE(k).active
-    %         continue;
-    %     end
-    %
-    %     % Desired signal
-    %     if k == 1
-    %         d_desired = waveform1;
-    %     else
-    %         d_desired = waveform2;
-    %     end
-    %
-    %     % Apply LMS filter
-    %     [y_out, e_out, w_out] = UE(k).lmsFilter(rx_signal.', d_desired);
-    %
-    %     UE(k).weights = w_out(:, end);
-    %     UE(k).output = y_out.';
-    %     UE(k).power = mean(abs(y_out).^2);
-    % end
-
-    %% Notes on Step Size Selection:
-    % 1. Fixed: mu = 0.01 to 0.1 (tune empirically)
-    % 2. Adaptive: mu = 1/(4*trace(Rxx)) ensures stability
-    % 3. Normalized LMS: mu = mu_0 / (eps + x'*x) for each sample
-    %
-    % Stability condition: 0 < mu < 2/lambda_max
-    % where lambda_max is max eigenvalue of autocorrelation matrix
-
-
-
-
-
-
+StoredData.didUpdate(currentFrame) = didUpdateNow;
 
     %% (g) SINR Calculation for UE1
     if UE(1).active && UE(2).active
@@ -407,7 +295,7 @@ for currentFrame = 1:Pars.numFrame
         P_interference_UE1 = mean( (abs(UE(1).weights') * abs(rx_sig2) ).^2 );
 
         % Noise power after beamforming
-        P_noise_UE1 = sigma2 * (UE(1).weights' * UE(1).weights);
+        P_noise_UE1 = Pars.sigma2 * (UE(1).weights' * UE(1).weights);
 
         % SINR
         SINR_UE1(currentFrame) = P_signal_UE1 / (P_interference_UE1 + P_noise_UE1);
@@ -427,7 +315,7 @@ for currentFrame = 1:Pars.numFrame
         P_interference_UE2 = mean( (abs(UE(2).weights') * abs(rx_sig1) ).^2 );
 
         % Noise power after beamforming
-        P_noise_UE2 = sigma2 * (UE(2).weights' * UE(2).weights);
+        P_noise_UE2 = Pars.sigma2 * (UE(2).weights' * UE(2).weights);
 
         % SINR
         SINR_UE2(currentFrame) = P_signal_UE2 / (P_interference_UE2 + P_noise_UE2);
@@ -456,6 +344,7 @@ for currentFrame = 1:Pars.numFrame
     set(hSINR_line, 'XData', time_axis, 'YData', SINR_UE1_dB(1:currentFrame));
     set(hSINR_line2, 'XData', time_axis, 'YData', SINR_UE2_dB(1:currentFrame));
 
+    
     if mod(currentFrame, 2) == 0
         % Pattern UE 1
         pat1 = abs(UE(1).weights' * sv_scan).^2;
