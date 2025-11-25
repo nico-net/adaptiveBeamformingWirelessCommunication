@@ -23,18 +23,21 @@ Pars.Ts = 1/Pars.Fsample;
 Pars.SnapshotsPerFrame = 500;
 Pars.TsVect = (0:Pars.SnapshotsPerFrame-1)*Pars.Ts;
 
+% Simulation time / physics
 Pars.TotalTime_s = 40;
 Pars.PhysicsStep = 0.05;
 Pars.numFrame = ceil(Pars.TotalTime_s / Pars.PhysicsStep);
 dt = Pars.PhysicsStep;
 
-Pars.Temp_ant = 293.15;
-Pars.NoiseFactor = 5;
+% Noise parameters
+Pars.Temp_ant = 293.15; %in Kelvin
+Pars.NoiseFactor = 5; %in dB
 
-Pars.speed1_kmh = 10;
-Pars.speed2_kmh = 10;
-Pars.v1_ms = Pars.speed1_kmh*(1000/3600);
-Pars.v2_ms = Pars.speed2_kmh*(1000/3600);
+% Vehicles parameters
+Pars.speed1_kmh = 40;
+Pars.speed2_kmh = 9;
+Pars.v1_ms = Pars.speed1_kmh * (1000/3600);
+Pars.v2_ms = Pars.speed2_kmh * (1000/3600);
 
 waveform1 = exp(1j*(2*pi*(Pars.fc)*Pars.TsVect + pi/6)).';
 waveform2 = exp(1j*(2*pi*(Pars.fc + 1e3)*Pars.TsVect + pi/3)).';
@@ -122,19 +125,15 @@ ylabel('Power');
 title('Received Power vs Time');
 xlim([0 Pars.TotalTime_s]);
 
-%% 6) Storage
-StoredData.V1Pos = zeros(3,Pars.numFrame);
-StoredData.V2Pos = zeros(3,Pars.numFrame);
-StoredData.UE1_weights = zeros(N_Elements,Pars.numFrame);
-StoredData.UE2_weights = zeros(N_Elements,Pars.numFrame);
-StoredData.ang_matrix = zeros(2,2,Pars.numFrame);
-StoredData.P_UE1 = zeros(1,Pars.numFrame);
-StoredData.P_UE2 = zeros(1,Pars.numFrame);
-
-StoredData.didUpdate = false(1,Pars.numFrame);
-StoredData.tSinceUpd = NaN(1,Pars.numFrame);
-StoredData.SINR_UE1_frozen_dB = NaN(1,Pars.numFrame);
+%% 6) Storage for replay
+% Preallocate storage arrays
+StoredData.V1Pos = zeros(3, Pars.numFrame);
+StoredData.V2Pos = zeros(3, Pars.numFrame);
+StoredData.UE1_weights = zeros(N_Elements, Pars.numFrame);
+StoredData.UE2_weights = zeros(N_Elements, Pars.numFrame);
+StoredData.ang_matrix = zeros(2, 2, Pars.numFrame);
 StoredData.validFrames = 0;
+StoredData.didUpdate = false(1, Pars.numFrame);
 
 %% Noise power
 Pars.sigma2 = db2pow(-174 + 10*log10(Pars.Temp_ant/293.15) + ...
@@ -274,12 +273,17 @@ for currentFrame = 1:Pars.numFrame
     StoredData.ang_matrix(:,:,currentFrame)=ang_matrix;
     StoredData.validFrames=currentFrame;
 
-    %% (i) Visualization (non modifico)
+    %% (i) Visualization
+    set(hPlotV1, 'XData', Geometry.V1Pos(1), 'YData', Geometry.V1Pos(2));
+    set(hPlotV2, 'XData', Geometry.V2Pos(1), 'YData', Geometry.V2Pos(2));
+    addpoints(hTrail1, Geometry.V1Pos(1), Geometry.V1Pos(2));
+    addpoints(hTrail2, Geometry.V2Pos(1), Geometry.V2Pos(2));
+    
     time_axis=(1:currentFrame)*Pars.PhysicsStep;
-
+    
     set(hSINR_line,'XData',time_axis,'YData',SINR_UE1_dB(1:currentFrame));
     set(hSINR_line2,'XData',time_axis,'YData',SINR_UE2_dB(1:currentFrame));
-
+    
     set(hPow_line1,'XData',time_axis,'YData',StoredData.P_UE1(1:currentFrame));
     set(hPow_line2,'XData',time_axis,'YData',StoredData.P_UE2(1:currentFrame));
 
