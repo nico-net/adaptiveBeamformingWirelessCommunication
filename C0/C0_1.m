@@ -40,9 +40,13 @@ SINR_UE2_dB = zeros(Pars.numFrame, 1);
 %% 2) Geometry + Array URA
 N_Row = 16; 
 N_Col = 16;
-N_Elements = N_Row * N_Col; 
+N_Elements = N_Row * N_Col;
+xpolElement = phased.CrossedDipoleAntennaElement(...
+    'FrequencyRange', [1e9 6e9]);
 Geometry.BSarray = phased.URA('Size',[N_Row N_Col], ...
-    'ElementSpacing', [Pars.lambda/2 Pars.lambda/2]);
+    'ElementSpacing', [Pars.lambda/2 Pars.lambda/2], 'Element',xpolElement);
+% Geometry.BSarray = phased.URA('Size',[N_Row N_Col], ...
+%     'ElementSpacing', [Pars.lambda/2 Pars.lambda/2]);
 
 Geometry.BSPos = [0; 0; 25];    
 Geometry.V1Pos = [40; 60; 1.5];   
@@ -88,7 +92,7 @@ fig = figure; set(fig,'WindowState','maximized');
 sgtitle('3D Beamforming Dashboard: Scenario & 3D Pattern')
 
 % --- Sottografico 1: Mappa Scenario ---
-subplot(2,3,1);
+subplot(2,2,1);
 plot3(Geometry.BSPos(1),Geometry.BSPos(2),Geometry.BSPos(3),...
     'k^','MarkerSize',12,'LineWidth',3,'MarkerFaceColor','y'); hold on;
 hPlotV1 = plot3(Geometry.V1Pos(1),Geometry.V1Pos(2),Geometry.V1Pos(3),...
@@ -105,21 +109,21 @@ xlabel('X'); ylabel('Y'); zlabel('Z');
 title('Scenario Reale'); axis([-50 300 -200 200 0 70]);
 
 % --- Sottografico 2: SINR (NUOVO) ---
-subplot(2,3,4);
+subplot(2,2,3);
 hSINR_line = plot(NaN,NaN,'b-','LineWidth',2); hold on;
 hSINR_line2 = plot(NaN,NaN,'r-','LineWidth',2);
 grid on; xlabel('Time [s]'); ylabel('SINR [dB]');
-title('SINR vs Time'); xlim([0 Pars.TotalTime_s]); ylim([-10 30]);
+title('SINR vs Time'); xlim([0 Pars.TotalTime_s]);
 
 % --- Sottografico 3: Potenza ---
-subplot(2,3,2);
+subplot(2,2,4);
 hPow_line1 = plot(NaN,NaN,'b-','LineWidth',1.5); hold on;
 hPow_line2 = plot(NaN,NaN,'r-','LineWidth',1.5);
 grid on; xlabel('Time [s]'); ylabel('Rx Power (Linear)');
 title('Potenza Ricevuta (LMS)'); xlim([0 Pars.TotalTime_s]);
 
 % --- Sottografico 4: 3D RADIATION PATTERN (Grande a destra, 2 righe) ---
-subplot(1,3,3);
+subplot(2,2,2);
 % Inizializziamo una surface vuota
 hSurf = surf(zeros(size(AzGrid)), zeros(size(AzGrid)), zeros(size(AzGrid)), ...
              zeros(size(AzGrid)));

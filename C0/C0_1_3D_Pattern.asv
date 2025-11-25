@@ -117,7 +117,7 @@ clim([-40 0]);
 hArr1_UE1 = quiver3(0,0,0,0,0,0,'b','LineWidth',3,'MaxHeadSize',0.5,'AutoScale','off');
 
 % --- 3. Combinato (Colonna destra - occupa 3 righe) ---
-subplot(3,3,[5 6 8 9]);
+subplot(3,2,[5 6 8 ]);
 hSurfTot = surf(zeros(size(AzGrid)), zeros(size(AzGrid)), zeros(size(AzGrid)), zeros(size(AzGrid)));
 shading interp; lightangle(-45,30); lighting gouraud; material shiny;
 axis equal; grid on; view(45, 30); title('Combined Pattern (UE1 & UE2)');

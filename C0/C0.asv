@@ -41,14 +41,14 @@ xpolElement = phased.CrossedDipoleAntennaElement(...
     'FrequencyRange', [1e9 6e9]);
 Geometry.BSarray = phased.URA('Size',[N_Row N_Col], ...
     'ElementSpacing', [Pars.lambda/2 Pars.lambda/2], 'Element',xpolElement);
-% Geometry.BSarray = phased.URA('Size',[N_Row N_Col], ...
-%     'ElementSpacing', [Pars.lambda/2 Pars.lambda/2]);
+Geometry.BSarray = phased.URA('Size',[N_Row N_Col], ...
+    'ElementSpacing', [Pars.lambda/2 Pars.lambda/2]);
 
 Geometry.BSPos = [0; 0; 25];    
 Geometry.V1Pos = [40; 60; 1.5];   
 Geometry.V2Pos = [60; -20; 1.5];  
 
-dir1 = [0; -1; 1]; dir1 = dir1/norm(dir1);
+dir1 = [0; -1; 0.3]; dir1 = dir1/norm(dir1);
 dir2 = [1; 0.5; 0]; dir2 = dir2/norm(dir2);
 Geometry.V1Vel = Pars.v1_ms * dir1;
 Geometry.V2Vel = Pars.v2_ms * dir2;
@@ -90,7 +90,7 @@ hTrail1 = animatedline('Color','b','LineStyle',':');
 hTrail2 = animatedline('Color','r','LineStyle',':');
 grid on; axis equal; view(45, 30);
 xlabel('X'); ylabel('Y'); zlabel('Z');
-title('3D Scenario'); axis([-30 300 -200 200 0 150]);
+title('3D Scenario'); axis([-30 300 -200 200 0 70]);
 
 % SINR
 subplot(2,5,6);
@@ -132,7 +132,7 @@ hLineV2_El = polarplot([0 0],[0 -40],'k--'); title('UE2 \theta [deg]'); rlim([-4
 % COMBINED ELEVATION
 subplot(2,5,10);
 hPlotPatTot_El = polarplot(NaN,NaN,'m','LineWidth',2); hold on;
-title('Comb. Elevation [deg]'); rlim([-40 0]); thetalim([-90 90]);
+title('Comb. Elevation'); rlim([-40 0]); thetalim([-90 90]);
 
 
 %% 6) Storage for replay
@@ -171,16 +171,9 @@ for currentFrame = 1:Pars.numFrame
     sig1 = freeSpace(waveform1,Geometry.V1Pos,Geometry.BSPos,Geometry.V1Vel,[0;0;0]);
     sig2 = freeSpace(waveform2,Geometry.V2Pos,Geometry.BSPos,Geometry.V2Vel,[0;0;0]);
 
-    vec1 = Geometry.V1Pos - Geometry.BSPos;
-    vec2 = Geometry.V2Pos - Geometry.BSPos;
-    
-    ang1_az = rad2deg(atan2(vec1(2), vec1(1)));
-    ang1_el = rad2deg(atan2(vec1(3), sqrt(vec1(1)^2 + vec1(2)^2)));
-    
-    ang2_az = rad2deg(atan2(vec2(2), vec2(1)));
-    ang2_el = rad2deg(atan2(vec2(3), sqrt(vec2(1)^2 + vec2(2)^2)));
-    
-    ang_matrix = [ang1_az ang2_az; ang1_el ang2_el];
+    ang1 = rad2deg(atan2(Geometry.V1Pos(2),Geometry.V1Pos(1)));
+    ang2 = rad2deg(atan2(Geometry.V2Pos(2),Geometry.V2Pos(1)));
+    ang_matrix = [ang1 ang2; 0 0];
 
     rx_clean = collector([sig1,sig2],ang_matrix);
 
