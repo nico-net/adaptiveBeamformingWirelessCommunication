@@ -1,0 +1,391 @@
+close all;
+clear;
+clc;
+
+%% ============================================================
+%%  SCRIPT 3D - LMS: SINGOLI UTENTI + COMBINATO
+%% ============================================================
+
+%% 1) System Parameters
+Pars.fc = 1e9;
+Pars.c = physconst('LightSpeed');
+Pars.lambda = Pars.c / Pars.fc;
+Pars.Fsample = 100e3;
+Pars.Ts = 1/Pars.Fsample;
+Pars.SnapshotsPerFrame = 500;
+Pars.TsVect = (0:Pars.SnapshotsPerFrame-1)*Pars.Ts;
+Pars.TotalTime_s = 40;
+Pars.PhysicsStep = 0.05;
+Pars.numFrame = ceil(Pars.TotalTime_s / Pars.PhysicsStep);
+dt = Pars.PhysicsStep;
+Pars.Temp_ant = 293.15;
+Pars.NoiseFactor = 5;
+
+% Velocità
+Pars.speed1_kmh = 30;
+Pars.speed2_kmh = 30;
+Pars.v1_ms = Pars.speed1_kmh*(1000/3600);
+Pars.v2_ms = Pars.speed2_kmh*(1000/3600);
+
+% Waveforms (Users)
+waveform1 = exp(1j*(2*pi*(Pars.fc)*Pars.TsVect + pi/6)).';
+waveform2 = exp(1j*(2*pi*(Pars.fc + 1e3)*Pars.TsVect + pi/3)).';
+
+SINR_UE1_dB = zeros(Pars.numFrame, 1);
+SINR_UE2_dB = zeros(Pars.numFrame, 1);
+
+%% 2) Geometry + Array URA
+N_Row = 16; 
+N_Col = 16;
+N_Elements = N_Row * N_Col; 
+Geometry.BSarray = phased.URA('Size',[N_Row N_Col], ...
+    'ElementSpacing', [Pars.lambda/2 Pars.lambda/2]);
+
+Geometry.BSPos = [0; 0; 25];    
+Geometry.V1Pos = [40; 60; 1.5];   
+Geometry.V2Pos = [60; -20; 1.5];  
+
+dir1 = [0; -1; 0.3]; dir1 = dir1/norm(dir1);
+dir2 = [1; 0.5; 0]; dir2 = dir2/norm(dir2);
+Geometry.V1Vel = Pars.v1_ms * dir1;
+Geometry.V2Vel = Pars.v2_ms * dir2;
+
+steeringVec = phased.SteeringVector('SensorArray', Geometry.BSarray,...
+    'PropagationSpeed', Pars.c);
+
+%% 3) Pre-Calculate Steering Matrix (Settore -90:90)
+Pars.DegStep = 4; % Passo in gradi (aumenta per velocità, diminuisci per qualità)
+az_vec = -90:Pars.DegStep:90;
+el_vec = -90:Pars.DegStep:90;
+[AzGrid, ElGrid] = meshgrid(az_vec, el_vec);
+ScanGrid = [AzGrid(:)'; ElGrid(:)']; 
+
+fprintf('Calcolo matrice sterzante pre-processata...\n');
+SV_Matrix = steeringVec(Pars.fc, ScanGrid);
+fprintf('Fatto.\n');
+
+%% 4) UE STRUCT
+UE_template = struct('id',[],'active',false,'pos',[NaN;NaN;NaN],...
+    'vel',[0;0;0],'DOA',[0;0],'DOA_prev',[0;0],'DOA_variation',0,...
+    'SNR',NaN,'power',NaN,'lastUpdate',0,'nextUpdate',0,...
+    'weights',ones(N_Elements,1),'output',[],'state','idle','lifetime',0);
+
+maxUsers = 2;
+UE = repmat(UE_template,maxUsers,1);
+for k=1:maxUsers, UE(k).id=k; end
+
+%% 5) Objects
+freeSpace = phased.FreeSpace('OperatingFrequency',Pars.fc,...
+    'SampleRate',Pars.Fsample,'TwoWayPropagation',false);
+collector = phased.Collector('Sensor',Geometry.BSarray,...
+    'OperatingFrequency',Pars.fc);
+
+%% 6) Visualization LAYOUT 
+fig = figure; set(fig,'WindowState','maximized');
+sgtitle('3D Beamforming: UE1, UE2 & Combined')
+
+% --- 1. Scenario (In alto a sinistra) ---
+subplot(2,3,1);
+plot3(Geometry.BSPos(1),Geometry.BSPos(2),Geometry.BSPos(3),...
+    'k^','MarkerSize',12,'LineWidth',3,'MarkerFaceColor','y'); hold on;
+hPlotV1 = plot3(Geometry.V1Pos(1),Geometry.V1Pos(2),Geometry.V1Pos(3),...
+    'bo','MarkerFaceColor','b');
+hPlotV2 = plot3(Geometry.V2Pos(1),Geometry.V2Pos(2),Geometry.V2Pos(3),...
+    'rs','MarkerFaceColor','r');
+plot3([Geometry.BSPos(1) Geometry.BSPos(1)], [Geometry.BSPos(2) Geometry.BSPos(2)], ...
+      [0 Geometry.BSPos(3)], 'k--'); 
+hTrail1 = animatedline('Color','b','LineStyle',':');
+hTrail2 = animatedline('Color','r','LineStyle',':');
+grid on; axis equal; view(45, 30);
+xlabel('X'); ylabel('Y'); zlabel('Z');
+title('Scenario'); axis([-50 300 -200 200 0 70]);
+
+% --- 2. UE1 Pattern (In alto al centro) ---
+subplot(2,3,2);
+hSurf1 = surf(zeros(size(AzGrid)), zeros(size(AzGrid)), zeros(size(AzGrid)), zeros(size(AzGrid)));
+shading interp; lightangle(-45,30); lighting gouraud; material shiny;
+axis equal; grid on; view(45, 30); title('Pattern UE1');
+xlim([-1 1]); ylim([-1 1]); zlim([-1 1]); hold on;
+clim([-40 0]); 
+hArr1_UE1 = quiver3(0,0,0,0,0,0,'b','LineWidth',3,'MaxHeadSize',0.5,'AutoScale','off');
+
+% --- 3. Combinato (Colonna destra - occupa 2 righe) ---
+subplot(2,3,[3 6]);
+hSurfTot = surf(zeros(size(AzGrid)), zeros(size(AzGrid)), zeros(size(AzGrid)), zeros(size(AzGrid)));
+shading interp; lightangle(-45,30); lighting gouraud; material shiny;
+axis equal; grid on; view(45, 30); title('Combined Pattern UE1 & UE2)');
+xlim([-1 1]); ylim([-1 1]); zlim([-1 1]); hold on;
+c = colorbar; c.Label.String = 'Gain [dB]'; clim([-40 0]);
+hArr1_Tot = quiver3(0,0,0,0,0,0,'b','LineWidth',3,'MaxHeadSize',0.5,'AutoScale','off');
+hArr2_Tot = quiver3(0,0,0,0,0,0,'r','LineWidth',3,'MaxHeadSize',0.5,'AutoScale','off');
+
+% --- 4. Potenza (In basso a sinistra) ---
+subplot(2,3,4);
+hPow_line1 = plot(NaN,NaN,'b-','LineWidth',1.5); hold on;
+hPow_line2 = plot(NaN,NaN,'r-','LineWidth',1.5);
+grid on; xlabel('Time [s]'); ylabel('Power');
+title('Rx Power (LMS)'); xlim([0 Pars.TotalTime_s]);
+
+% --- 5. UE2 Pattern (In basso al centro) ---
+subplot(2,3,5);
+hSurf2 = surf(zeros(size(AzGrid)), zeros(size(AzGrid)), zeros(size(AzGrid)), zeros(size(AzGrid)));
+shading interp; lightangle(-45,30); lighting gouraud; material shiny;
+axis equal; grid on; view(45, 30); title('Pattern UE2');
+xlim([-1 1]); ylim([-1 1]); zlim([-1 1]); hold on;
+clim([-40 0]);
+hArr2_UE2 = quiver3(0,0,0,0,0,0,'r','LineWidth',3,'MaxHeadSize',0.5,'AutoScale','off');
+
+
+%% 7) Storage
+StoredData.V1Pos = zeros(3,Pars.numFrame);
+StoredData.V2Pos = zeros(3,Pars.numFrame);
+StoredData.UE1_weights = zeros(N_Elements,Pars.numFrame);
+StoredData.UE2_weights = zeros(N_Elements,Pars.numFrame);
+StoredData.ang_matrix = zeros(2,2,Pars.numFrame);
+StoredData.P_UE1 = zeros(1,Pars.numFrame);
+StoredData.P_UE2 = zeros(1,Pars.numFrame);
+StoredData.didUpdate = false(1,Pars.numFrame);
+StoredData.validFrames = 0;
+
+Pars.sigma2 = db2pow(-174 + 10*log10(Pars.Temp_ant/293.15) + ...
+    10*log10(1e5)-30 + Pars.NoiseFactor);
+
+%% 8) MAIN LOOP
+for currentFrame = 1:Pars.numFrame
+    
+    %% Movement
+    Geometry.V1Pos = Geometry.V1Pos + Geometry.V1Vel*dt;
+    Geometry.V2Pos = Geometry.V2Pos + Geometry.V2Vel*dt;
+    UE(1).pos = Geometry.V1Pos; UE(1).vel = Geometry.V1Vel;
+    UE(2).pos = Geometry.V2Pos; UE(2).vel = Geometry.V2Vel;
+    
+    %% Channel
+    relPos1 = Geometry.V1Pos - Geometry.BSPos;
+    relPos2 = Geometry.V2Pos - Geometry.BSPos;
+    [az1, el1, ~] = cart2sph(relPos1(1), relPos1(2), relPos1(3));
+    [az2, el2, ~] = cart2sph(relPos2(1), relPos2(2), relPos2(3));
+    ang_matrix = [rad2deg(az1) rad2deg(az2); rad2deg(el1) rad2deg(el2)];
+    
+    sig1 = freeSpace(waveform1, Geometry.V1Pos, Geometry.BSPos, Geometry.V1Vel, [0;0;0]);
+    sig2 = freeSpace(waveform2, Geometry.V2Pos, Geometry.BSPos, Geometry.V2Vel, [0;0;0]);
+    rx_clean = collector([sig1, sig2], ang_matrix);
+    
+    %% LMS
+    noise = sqrt(Pars.sigma2/2)*(randn(size(rx_clean)) + 1j*randn(size(rx_clean)));
+    rx_signal = rx_clean + noise;
+    
+    for k=1:maxUsers
+        UE(k).DOA = ang_matrix(:,k);
+        UE(k).DOA_variation = norm(UE(k).DOA - UE(k).DOA_prev);
+    end
+    
+    didUpdateNow = false;
+    if UE(1).DOA_variation > 2 || mod(currentFrame, 20) == 0
+        didUpdateNow = true;
+        mu_base = 0.05;
+        for k=1:maxUsers
+            UE(k).DOA_prev = UE(k).DOA;
+            d_des = (k==1)*waveform1 + (k~=1)*waveform2;
+            w = UE(k).weights;
+            for n = 1:size(rx_signal,1)
+                x = rx_signal(n,:).';
+                y = w' * x;
+                e = d_des(n) - y;
+                step = mu_base / (real(x'*x) + 1e-6);
+                w = w + step * x * conj(e);
+            end
+            UE(k).weights = w;
+            y_curr = w'*rx_signal.';
+            UE(k).power = mean(abs(y_curr).^2);
+        end
+    end
+    StoredData.didUpdate(currentFrame) = didUpdateNow;
+    StoredData.P_UE1(currentFrame) = UE(1).power;
+    StoredData.P_UE2(currentFrame) = UE(2).power;
+    
+    %% Store
+    StoredData.V1Pos(:,currentFrame) = Geometry.V1Pos;
+    StoredData.V2Pos(:,currentFrame) = Geometry.V2Pos;
+    StoredData.UE1_weights(:,currentFrame) = UE(1).weights;
+    StoredData.UE2_weights(:,currentFrame) = UE(2).weights;
+    StoredData.ang_matrix(:,:,currentFrame) = ang_matrix;
+    StoredData.validFrames = currentFrame;
+    
+    %% Visualization Update
+    if mod(currentFrame, 5) == 0
+        time_axis = (1:currentFrame)*Pars.PhysicsStep;
+        
+        % Geo
+        set(hPlotV1, 'XData', Geometry.V1Pos(1), 'YData', Geometry.V1Pos(2), 'ZData', Geometry.V1Pos(3));
+        set(hPlotV2, 'XData', Geometry.V2Pos(1), 'YData', Geometry.V2Pos(2), 'ZData', Geometry.V2Pos(3));
+        addpoints(hTrail1, Geometry.V1Pos(1), Geometry.V1Pos(2), Geometry.V1Pos(3));
+        addpoints(hTrail2, Geometry.V2Pos(1), Geometry.V2Pos(2), Geometry.V2Pos(3));
+        
+        % Power
+        set(hPow_line1, 'XData', time_axis, 'YData', StoredData.P_UE1(1:currentFrame));
+        set(hPow_line2, 'XData', time_axis, 'YData', StoredData.P_UE2(1:currentFrame));
+        
+        % --- 3D CALCS ---
+        % Risposte lineari
+        resp1 = abs(UE(1).weights' * SV_Matrix);
+        resp2 = abs(UE(2).weights' * SV_Matrix);
+        
+        dyn_range = 40; % 40dB di dinamica visuale
+        
+        % === PLOT UE 1 ===
+        pat1_db = 10*log10(resp1.^2 + eps);
+        pat1_db_norm = pat1_db - max(pat1_db);
+        R1 = pat1_db_norm + dyn_range; R1(R1<0)=0; R1 = R1/dyn_range;
+        [X1, Y1, Z1] = sph2cart(deg2rad(AzGrid), deg2rad(ElGrid), reshape(R1,size(AzGrid)));
+        set(hSurf1, 'XData', X1, 'YData', Y1, 'ZData', Z1, 'CData', reshape(pat1_db_norm,size(AzGrid)));
+        
+        % === PLOT UE 2 ===
+        pat2_db = 10*log10(resp2.^2 + eps);
+        pat2_db_norm = pat2_db - max(pat2_db);
+        R2 = pat2_db_norm + dyn_range; R2(R2<0)=0; R2 = R2/dyn_range;
+        [X2, Y2, Z2] = sph2cart(deg2rad(AzGrid), deg2rad(ElGrid), reshape(R2,size(AzGrid)));
+        set(hSurf2, 'XData', X2, 'YData', Y2, 'ZData', Z2, 'CData', reshape(pat2_db_norm,size(AzGrid)));
+        
+        % === PLOT COMBINATO ===
+        pat_tot_lin = resp1.^2 + resp2.^2;
+        pat_tot_db = 10*log10(pat_tot_lin + eps);
+        pat_tot_norm = pat_tot_db - max(pat_tot_db);
+        RT = pat_tot_norm + dyn_range; RT(RT<0)=0; RT = RT/dyn_range;
+        [XT, YT, ZT] = sph2cart(deg2rad(AzGrid), deg2rad(ElGrid), reshape(RT,size(AzGrid)));
+        set(hSurfTot, 'XData', XT, 'YData', YT, 'ZData', ZT, 'CData', reshape(pat_tot_norm,size(AzGrid)));
+        
+        % === ARROWS ===
+        u1_az = deg2rad(ang_matrix(1,1)); u1_el = deg2rad(ang_matrix(2,1));
+        u2_az = deg2rad(ang_matrix(1,2)); u2_el = deg2rad(ang_matrix(2,2));
+        
+        F_Len = 2.5; % Lunghezza Frecce
+        [dx1, dy1, dz1] = sph2cart(u1_az, u1_el, F_Len);
+        [dx2, dy2, dz2] = sph2cart(u2_az, u2_el, F_Len);
+        
+        % Update Arrows UE1 Plot
+        set(hArr1_UE1, 'UData', dx1, 'VData', dy1, 'WData', dz1);
+        
+        % Update Arrows UE2 Plot
+        set(hArr2_UE2, 'UData', dx2, 'VData', dy2, 'WData', dz2);
+        
+        % Update Arrows Combined
+        set(hArr1_Tot, 'UData', dx1, 'VData', dy1, 'WData', dz1);
+        set(hArr2_Tot, 'UData', dx2, 'VData', dy2, 'WData', dz2);
+        
+        drawnow limitrate;
+    end
+end
+
+%% 9) Slider
+totalFrames = StoredData.validFrames;
+StoredData.V1Pos = StoredData.V1Pos(:, 1:totalFrames);
+StoredData.V2Pos = StoredData.V2Pos(:, 1:totalFrames);
+StoredData.UE1_weights = StoredData.UE1_weights(:, 1:totalFrames);
+StoredData.UE2_weights = StoredData.UE2_weights(:, 1:totalFrames);
+StoredData.ang_matrix = StoredData.ang_matrix(:, :, 1:totalFrames);
+StoredData.P_UE1 = StoredData.P_UE1(1:totalFrames);
+StoredData.P_UE2 = StoredData.P_UE2(1:totalFrames);
+
+sliderPanel = uipanel(fig, 'Position', [0.05 0.01 0.9 0.05], 'BorderType', 'none');
+timeSlider = uicontrol(sliderPanel, 'Style', 'slider', ...
+    'Units', 'normalized', 'Position', [0.1 0.3 0.75 0.4], ...
+    'Min', 1, 'Max', totalFrames, 'Value', totalFrames, ...
+    'SliderStep', [1/(totalFrames-1), 10/(totalFrames-1)]);
+timeLabel = uicontrol(sliderPanel, 'Style', 'text', ...
+    'Units', 'normalized', 'Position', [0.86 0.2 0.12 0.6], ...
+    'String', sprintf('t = %.2f s', totalFrames*Pars.PhysicsStep), ...
+    'FontSize', 10, 'HorizontalAlignment', 'left');
+
+sData.totalFrames = totalFrames;
+sData.StoredData = StoredData;
+sData.Pars = Pars;
+sData.SV_Matrix = SV_Matrix;
+sData.AzGrid = AzGrid; sData.ElGrid = ElGrid;
+sData.hPlotV1 = hPlotV1; sData.hPlotV2 = hPlotV2;
+sData.hTrail1 = hTrail1; sData.hTrail2 = hTrail2;
+sData.hPow_line1 = hPow_line1; sData.hPow_line2 = hPow_line2;
+% Handles Surfaces
+sData.hSurf1 = hSurf1;
+sData.hSurf2 = hSurf2;
+sData.hSurfTot = hSurfTot;
+% Handles Arrows
+sData.hArr1_UE1 = hArr1_UE1;
+sData.hArr2_UE2 = hArr2_UE2;
+sData.hArr1_Tot = hArr1_Tot; sData.hArr2_Tot = hArr2_Tot;
+sData.timeLabel = timeLabel;
+
+timeSlider.UserData = sData;
+timeSlider.Callback = @updatePlotsFinal3D;
+
+fprintf('Simulazione Completa. 3 Plot 3D attivi.\n');
+
+%% Callback
+function updatePlotsFinal3D(src, ~)
+    d = src.UserData;
+    f = round(src.Value);
+    if f < 1, f = 1; end
+    if f > d.totalFrames, f = d.totalFrames; end
+    
+    currT = f * d.Pars.PhysicsStep;
+    set(d.timeLabel, 'String', sprintf('t = %.2f s', currT));
+    
+    % 1. Geo
+    V1 = d.StoredData.V1Pos(:, f);
+    V2 = d.StoredData.V2Pos(:, f);
+    set(d.hPlotV1, 'XData', V1(1), 'YData', V1(2), 'ZData', V1(3));
+    set(d.hPlotV2, 'XData', V2(1), 'YData', V2(2), 'ZData', V2(3));
+    
+    clearpoints(d.hTrail1); clearpoints(d.hTrail2);
+    sK = max(1, f-100);
+    for k=sK:f
+        addpoints(d.hTrail1, d.StoredData.V1Pos(1,k), d.StoredData.V1Pos(2,k), d.StoredData.V1Pos(3,k));
+        addpoints(d.hTrail2, d.StoredData.V2Pos(1,k), d.StoredData.V2Pos(2,k), d.StoredData.V2Pos(3,k));
+    end
+    
+    % 2. Power
+    subplot(2,3,4); hold on;
+    plot(currT, d.StoredData.P_UE1(f), 'bo', 'MarkerFaceColor', 'b');
+    plot(currT, d.StoredData.P_UE2(f), 'ro', 'MarkerFaceColor', 'r');
+    
+    % 3. 3D Patterns
+    w1 = d.StoredData.UE1_weights(:, f);
+    w2 = d.StoredData.UE2_weights(:, f);
+    
+    resp1 = abs(w1' * d.SV_Matrix);
+    resp2 = abs(w2' * d.SV_Matrix);
+    
+    dyn_range = 40;
+    
+    % UE1
+    p1 = 10*log10(resp1.^2+eps); p1 = p1 - max(p1);
+    R1 = p1+dyn_range; R1(R1<0)=0; R1=R1/dyn_range;
+    [X1, Y1, Z1] = sph2cart(deg2rad(d.AzGrid), deg2rad(d.ElGrid), reshape(R1,size(d.AzGrid)));
+    set(d.hSurf1, 'XData', X1, 'YData', Y1, 'ZData', Z1, 'CData', reshape(p1,size(d.AzGrid)));
+    
+    % UE2
+    p2 = 10*log10(resp2.^2+eps); p2 = p2 - max(p2);
+    R2 = p2+dyn_range; R2(R2<0)=0; R2=R2/dyn_range;
+    [X2, Y2, Z2] = sph2cart(deg2rad(d.AzGrid), deg2rad(d.ElGrid), reshape(R2,size(d.AzGrid)));
+    set(d.hSurf2, 'XData', X2, 'YData', Y2, 'ZData', Z2, 'CData', reshape(p2,size(d.AzGrid)));
+    
+    % TOT
+    pt = 10*log10(resp1.^2 + resp2.^2 + eps); pt = pt - max(pt);
+    RT = pt+dyn_range; RT(RT<0)=0; RT=RT/dyn_range;
+    [XT, YT, ZT] = sph2cart(deg2rad(d.AzGrid), deg2rad(d.ElGrid), reshape(RT,size(d.AzGrid)));
+    set(d.hSurfTot, 'XData', XT, 'YData', YT, 'ZData', ZT, 'CData', reshape(pt,size(d.AzGrid)));
+    
+    % 4. Arrows
+    ang = d.StoredData.ang_matrix(:,:,f);
+    u1_az = deg2rad(ang(1,1)); u1_el = deg2rad(ang(2,1));
+    u2_az = deg2rad(ang(1,2)); u2_el = deg2rad(ang(2,2));
+    F_Len = 2.5;
+    [dx1, dy1, dz1] = sph2cart(u1_az, u1_el, F_Len);
+    [dx2, dy2, dz2] = sph2cart(u2_az, u2_el, F_Len);
+    
+    set(d.hArr1_UE1, 'UData', dx1, 'VData', dy1, 'WData', dz1);
+    set(d.hArr2_UE2, 'UData', dx2, 'VData', dy2, 'WData', dz2);
+    set(d.hArr1_Tot, 'UData', dx1, 'VData', dy1, 'WData', dz1);
+    set(d.hArr2_Tot, 'UData', dx2, 'VData', dy2, 'WData', dz2);
+    
+    drawnow;
+end
