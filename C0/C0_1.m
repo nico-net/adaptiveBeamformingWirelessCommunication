@@ -31,6 +31,9 @@ Pars.v2_ms = Pars.speed2_kmh*(1000/3600);
 waveform1 = exp(1j*(2*pi*(Pars.fc)*Pars.TsVect + pi/6)).';
 waveform2 = exp(1j*(2*pi*(Pars.fc + 1e3)*Pars.TsVect + pi/3)).';
 
+% AGGIUNTO: Array SINR
+SINR_UE1 = zeros(Pars.numFrame, 1);
+SINR_UE2 = zeros(Pars.numFrame, 1);
 SINR_UE1_dB = zeros(Pars.numFrame, 1);
 SINR_UE2_dB = zeros(Pars.numFrame, 1);
 
@@ -85,7 +88,7 @@ fig = figure; set(fig,'WindowState','maximized');
 sgtitle('3D Beamforming Dashboard: Scenario & 3D Pattern')
 
 % --- Sottografico 1: Mappa Scenario ---
-subplot(2,2,1);
+subplot(2,3,1);
 plot3(Geometry.BSPos(1),Geometry.BSPos(2),Geometry.BSPos(3),...
     'k^','MarkerSize',12,'LineWidth',3,'MarkerFaceColor','y'); hold on;
 hPlotV1 = plot3(Geometry.V1Pos(1),Geometry.V1Pos(2),Geometry.V1Pos(3),...
@@ -101,15 +104,22 @@ grid on; axis equal; view(45, 30);
 xlabel('X'); ylabel('Y'); zlabel('Z');
 title('Scenario Reale'); axis([-50 300 -200 200 0 70]);
 
-% --- Sottografico 2: Potenza ---
-subplot(2,2,3);
+% --- Sottografico 2: SINR (NUOVO) ---
+subplot(2,3,4);
+hSINR_line = plot(NaN,NaN,'b-','LineWidth',2); hold on;
+hSINR_line2 = plot(NaN,NaN,'r-','LineWidth',2);
+grid on; xlabel('Time [s]'); ylabel('SINR [dB]');
+title('SINR vs Time'); xlim([0 Pars.TotalTime_s]); ylim([-10 30]);
+
+% --- Sottografico 3: Potenza ---
+subplot(2,3,2);
 hPow_line1 = plot(NaN,NaN,'b-','LineWidth',1.5); hold on;
 hPow_line2 = plot(NaN,NaN,'r-','LineWidth',1.5);
 grid on; xlabel('Time [s]'); ylabel('Rx Power (Linear)');
 title('Potenza Ricevuta (LMS)'); xlim([0 Pars.TotalTime_s]);
 
-% --- Sottografico 3: 3D RADIATION PATTERN (Grande a destra) ---
-subplot(1,2,2);
+% --- Sottografico 4: 3D RADIATION PATTERN (Grande a destra, 2 righe) ---
+subplot(1,3,3);
 % Inizializziamo una surface vuota
 hSurf = surf(zeros(size(AzGrid)), zeros(size(AzGrid)), zeros(size(AzGrid)), ...
              zeros(size(AzGrid)));
@@ -150,6 +160,10 @@ for currentFrame = 1:Pars.numFrame
     UE(1).pos = Geometry.V1Pos; UE(1).vel = Geometry.V1Vel;
     UE(2).pos = Geometry.V2Pos; UE(2).vel = Geometry.V2Vel;
     
+    % AGGIUNTO: Attivazione UE
+    UE(1).active = true;
+    UE(2).active = true;
+    
     %% Channel
     relPos1 = Geometry.V1Pos - Geometry.BSPos;
     relPos2 = Geometry.V2Pos - Geometry.BSPos;
@@ -171,31 +185,57 @@ for currentFrame = 1:Pars.numFrame
         UE(k).DOA_variation = norm(UE(k).DOA - UE(k).DOA_prev);
     end
     
+    %% LMS beamforming update logic - UNIFORMATO A C0
     didUpdateNow = false;
-    % Update pesi se l'angolo cambia o ogni tot frame
-    if UE(1).DOA_variation > 2 || mod(currentFrame, 20) == 0
+    if UE(1).DOA_variation > 1  % MODIFICATO: era > 2 || mod(currentFrame, 20)
         didUpdateNow = true;
-        mu_base = 0.05;
+        
+        [N,L] = size(rx_signal);
         for k=1:maxUsers
+            UE(k).weights = zeros(L,1);  % Reset pesi
             UE(k).DOA_prev = UE(k).DOA;
-            d_des = (k==1)*waveform1 + (k~=1)*waveform2;
+        end
+
+        for k=1:maxUsers
+            d_desired = (k==1)*waveform1 + (k~=1)*waveform2;
             w = UE(k).weights;
-            for n = 1:size(rx_signal,1)
+            y_out = zeros(N,1);
+
+            for n = 1:N
                 x = rx_signal(n,:).';
+                mu = trace(x*x');  % MODIFICATO: era mu_base / (real(x'*x) + 1e-6)
                 y = w' * x;
-                e = d_des(n) - y;
-                step = mu_base / (real(x'*x) + 1e-6);
-                w = w + step * x * conj(e);
+                e = d_desired(n) - y;
+                w = w + mu * x * conj(e);
+                y_out(n) = y;
             end
+
             UE(k).weights = w;
-            
-            y_curr = w'*rx_signal.';
-            UE(k).power = mean(abs(y_curr).^2);
+            UE(k).output = y_out.';
+            UE(k).power = mean(abs(y_out).^2);
         end
     end
     StoredData.didUpdate(currentFrame) = didUpdateNow;
     StoredData.P_UE1(currentFrame) = UE(1).power;
     StoredData.P_UE2(currentFrame) = UE(2).power;
+    
+    %% SINR Calculation - AGGIUNTO
+    if UE(1).active && UE(2).active
+        rx1 = collector(sig1, ang_matrix(:,1))';
+        rx2 = collector(sig2, ang_matrix(:,2))';
+
+        P_s1 = mean(abs(UE(1).weights'*rx1).^2);
+        P_i1 = mean(abs(UE(1).weights'*rx2).^2);
+        P_n1 = Pars.sigma2*(UE(1).weights'*UE(1).weights);
+        SINR_UE1(currentFrame) = P_s1/(P_i1+P_n1);
+        SINR_UE1_dB(currentFrame) = 10*log10(SINR_UE1(currentFrame));
+
+        P_s2 = mean(abs(UE(2).weights'*rx2).^2);
+        P_i2 = mean(abs(UE(2).weights'*rx1).^2);
+        P_n2 = Pars.sigma2*(UE(2).weights'*UE(2).weights);
+        SINR_UE2(currentFrame) = P_s2/(P_i2+P_n2);
+        SINR_UE2_dB(currentFrame) = 10*log10(SINR_UE2(currentFrame));
+    end
     
     %% Store Data
     StoredData.V1Pos(:,currentFrame) = Geometry.V1Pos;
@@ -218,6 +258,10 @@ for currentFrame = 1:Pars.numFrame
         % 2. Power Lines
         set(hPow_line1, 'XData', time_axis, 'YData', StoredData.P_UE1(1:currentFrame));
         set(hPow_line2, 'XData', time_axis, 'YData', StoredData.P_UE2(1:currentFrame));
+        
+        % 2a. SINR Lines - AGGIUNTO
+        set(hSINR_line, 'XData', time_axis, 'YData', SINR_UE1_dB(1:currentFrame));
+        set(hSINR_line2, 'XData', time_axis, 'YData', SINR_UE2_dB(1:currentFrame));
         
         % 3. --- 3D PATTERN UPDATE ---
         % Calcolo risposta array sulla griglia sferica
@@ -273,6 +317,8 @@ StoredData.UE2_weights = StoredData.UE2_weights(:, 1:totalFrames);
 StoredData.ang_matrix = StoredData.ang_matrix(:, :, 1:totalFrames);
 StoredData.P_UE1 = StoredData.P_UE1(1:totalFrames);
 StoredData.P_UE2 = StoredData.P_UE2(1:totalFrames);
+SINR_UE1_dB = SINR_UE1_dB(1:totalFrames);  % AGGIUNTO
+SINR_UE2_dB = SINR_UE2_dB(1:totalFrames);  % AGGIUNTO
 
 % Slider Setup
 sliderPanel = uipanel(fig, 'Position', [0.05 0.01 0.9 0.05], 'BorderType', 'none');
@@ -298,6 +344,10 @@ sData.hPow_line1 = hPow_line1; sData.hPow_line2 = hPow_line2;
 sData.hSurf = hSurf;
 sData.hArr1 = hArr1; sData.hArr2 = hArr2;
 sData.timeLabel = timeLabel;
+sData.SINR_UE1_dB = SINR_UE1_dB;  % AGGIUNTO
+sData.SINR_UE2_dB = SINR_UE2_dB;  % AGGIUNTO
+sData.hSINR_line = hSINR_line;    % AGGIUNTO
+sData.hSINR_line2 = hSINR_line2;  % AGGIUNTO
 
 timeSlider.UserData = sData;
 timeSlider.Callback = @updatePlotsFinal3D;
@@ -327,10 +377,15 @@ function updatePlotsFinal3D(src, ~)
         addpoints(d.hTrail2, d.StoredData.V2Pos(1,k), d.StoredData.V2Pos(2,k), d.StoredData.V2Pos(3,k));
     end
     
-    % 2. Power Line Marker
-    subplot(2,2,3); hold on;
+    % 2. Power & SINR Line Markers - MODIFICATO
+    subplot(2,3,2); hold on;
     plot(currT, d.StoredData.P_UE1(f), 'bo', 'MarkerFaceColor', 'b');
     plot(currT, d.StoredData.P_UE2(f), 'ro', 'MarkerFaceColor', 'r');
+    
+    % 2a. SINR Markers - AGGIUNTO
+    subplot(2,3,4); hold on;
+    plot(currT, d.SINR_UE1_dB(f), 'bo', 'MarkerFaceColor', 'b');
+    plot(currT, d.SINR_UE2_dB(f), 'ro', 'MarkerFaceColor', 'r');
     
     % 3. 3D Pattern
     w1 = d.StoredData.UE1_weights(:, f);

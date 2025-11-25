@@ -88,15 +88,15 @@ grid on; axis equal; view(45, 30);
 xlabel('X'); ylabel('Y'); zlabel('Z');
 title('3D Scenario'); axis([-30 300 -200 200 0 70]);
 
-% % SINR
-% subplot(2,5,3);
-% hSINR_line = plot(NaN,NaN,'b-','LineWidth',2); hold on;
-% hSINR_line2 = plot(NaN,NaN,'r-','LineWidth',2);
-% grid on; xlabel('Time [s]'); ylabel('dB');
-% title('SINR'); xlim([0 Pars.TotalTime_s]); ylim([-10 30]);
+% SINR
+subplot(2,5,3);
+hSINR_line = plot(NaN,NaN,'b-','LineWidth',2); hold on;
+hSINR_line2 = plot(NaN,NaN,'r-','LineWidth',2);
+grid on; xlabel('Time [s]'); ylabel('dB');
+title('SINR'); xlim([0 Pars.TotalTime_s]); ylim([-10 30]);
 
 % POWER
-subplot(2,5,[3 4]);
+subplot(2,5,4);
 hPow_line1 = plot(NaN,NaN,'b-','LineWidth',1.5); hold on;
 hPow_line2 = plot(NaN,NaN,'r-','LineWidth',1.5);
 grid on; xlabel('Time [s]'); ylabel('Linear Power');
@@ -152,76 +152,113 @@ scan_el = -90:1:90;
 
 for currentFrame = 1:Pars.numFrame
     
-    %% Movement
+    %% (a) Physics
     Geometry.V1Pos = Geometry.V1Pos + Geometry.V1Vel*dt;
     Geometry.V2Pos = Geometry.V2Pos + Geometry.V2Vel*dt;
+
     UE(1).pos = Geometry.V1Pos; UE(1).vel = Geometry.V1Vel;
     UE(2).pos = Geometry.V2Pos; UE(2).vel = Geometry.V2Vel;
-    
-    
-    
-    %% Channel
-    relPos1 = Geometry.V1Pos - Geometry.BSPos;
-    relPos2 = Geometry.V2Pos - Geometry.BSPos;
 
-    % Angles
-    [az1, el1, ~] = cart2sph(relPos1(1), relPos1(2), relPos1(3));
-    [az2, el2, ~] = cart2sph(relPos2(1), relPos2(2), relPos2(3));
-    ang_matrix = [rad2deg(az1) rad2deg(az2); rad2deg(el1) rad2deg(el2)];
-    
-    sig1 = freeSpace(waveform1, Geometry.V1Pos, Geometry.BSPos, Geometry.V1Vel, [0;0;0]);
-    sig2 = freeSpace(waveform2, Geometry.V2Pos, Geometry.BSPos, Geometry.V2Vel, [0;0;0]);
-    rx_clean = collector([sig1, sig2], ang_matrix);
-    
-    %% Noise & LMS
-    noise = sqrt(Pars.sigma2/2)*(randn(size(rx_clean)) + 1j*randn(size(rx_clean)));
-    rx_signal = rx_clean + noise;
-    
-    for k=1:maxUsers
-        UE(k).DOA = ang_matrix(:,k);
-        UE(k).DOA_variation = norm(UE(k).DOA - UE(k).DOA_prev);
+    if Geometry.V1Pos(1) > 120
+        break;
     end
-    
-    didUpdateNow = false;
-    if UE(1).DOA_variation > 2 || mod(currentFrame, 20) == 0
-        didUpdateNow = true;
-        mu_base = 0.05;
-        for k=1:maxUsers
-            UE(k).DOA_prev = UE(k).DOA;
-            d_des = (k==1)*waveform1 + (k~=1)*waveform2;
-            w = UE(k).weights;
-            for n = 1:size(rx_signal,1)
-                x = rx_signal(n,:).';
-                y = w' * x;
-                e = d_des(n) - y;
-                step = mu_base / (real(x'*x) + 1e-6);
-                w = w + step * x * conj(e);
-            end
-            UE(k).weights = w;
-            UE(k).power = mean(abs(UE(k).output).^2);
-            if isnan(UE(k).power), UE(k).power = 0; end
 
-            % Recalculate actual output power for plotting
-            y_curr = w'*rx_signal.';
-            UE(k).power = mean(abs(y_curr).^2);
+    %% (b) Channel
+    sig1 = freeSpace(waveform1,Geometry.V1Pos,Geometry.BSPos,Geometry.V1Vel,[0;0;0]);
+    sig2 = freeSpace(waveform2,Geometry.V2Pos,Geometry.BSPos,Geometry.V2Vel,[0;0;0]);
+
+    ang1 = rad2deg(atan2(Geometry.V1Pos(2),Geometry.V1Pos(1)));
+    ang2 = rad2deg(atan2(Geometry.V2Pos(2),Geometry.V2Pos(1)));
+    ang_matrix = [ang1 ang2; 0 0];
+
+    rx_clean = collector([sig1,sig2],ang_matrix);
+
+    %% (c) Noise
+    noise = sqrt(Pars.sigma2/2)*(randn(size(rx_clean))+1j*randn(size(rx_clean)));
+    rx_signal = rx_clean + noise;
+
+    %% (d) MDL
+    R = (rx_signal * rx_signal') / size(rx_signal, 2);
+    eigvals = sort(real(eig(R)), 'descend');
+    eigvals(eigvals < 0) = eps;
+
+    M = size(R,1);
+    Nsnap = size(rx_signal,2);
+    mdl = zeros(M,1);
+
+    for k = 0:M-1
+        gm = geomean(eigvals(k+1:end));
+        am = mean(eigvals(k+1:end));
+        mdl(k+1) = -Nsnap*(M-k)*log(gm/am) + 0.5*k*(2*M-k)*log(Nsnap);
+    end
+
+    [~, idx] = min(mdl);
+    numUsers_est = idx-1;
+    numUsers_est = min(max(numUsers_est,0), maxUsers);
+
+    %% (e) DOA known
+    for k=1:maxUsers
+        UE(k).active = true;
+        UE(k).DOA = [ang_matrix(1,k); 0];
+        UE(k).DOA_variation = norm(UE(k).DOA - UE(k).DOA_prev);
+        UE(k).lifetime = UE(k).lifetime + 1;
+    end
+
+    %% (f) LMS beamforming update logic
+    didUpdateNow = false;
+    if UE(k).DOA_variation > 1
+        didUpdateNow = true;
+        UE(k).DOA_prev = UE(k).DOA;
+
+        [N,L] = size(rx_signal);
+        for k=1:maxUsers
+            UE(k).weights = zeros(L,1);
+        end
+
+        for k=1:maxUsers
+            d_desired = (k==1)*waveform1 + (k~=1)*waveform2;
+            w = UE(k).weights;
+            y_out = zeros(N,1);
+
+            for n = 1:N
+                x = rx_signal(n,:).';
+                mu = trace(x*x');
+                y = w' * x;
+                e = d_desired(n) - y;
+                w = w + mu * x * conj(e);
+                y_out(n) = y;
+            end
+
+            UE(k).weights = w;
+            UE(k).output = y_out.';
+            UE(k).power = mean(abs(y_out).^2);
         end
     end
-    StoredData.didUpdate(currentFrame) = didUpdateNow;
     StoredData.P_UE1(currentFrame) = UE(1).power;
-    StoredData.P_UE2(currentFrame) = UE(2).power;
-    
-    %% SINR
-    if UE(1).active
-        rx1 = collector(sig1, ang_matrix(:,1))';
-        rx2 = collector(sig2, ang_matrix(:,2))';
-        P_s1 = mean(abs(UE(1).weights' * rx1).^2);
-        P_i1 = mean(abs(UE(1).weights' * rx2).^2);
-        P_n1 = Pars.sigma2 * (UE(1).weights' * UE(1).weights);
-        SINR_UE1_dB(currentFrame) = 10*log10(P_s1 / (P_i1 + P_n1));
-        P_s2 = mean(abs(UE(2).weights' * rx2).^2);
-        P_i2 = mean(abs(UE(2).weights' * rx1).^2);
-        P_n2 = Pars.sigma2 * (UE(2).weights' * UE(2).weights);
-        SINR_UE2_dB(currentFrame) = 10*log10(P_s2 / (P_i2 + P_n2));
+    StoredData.P_UE2(currentFrame) = UE(2).power; 
+    StoredData.didUpdate(currentFrame) = didUpdateNow;
+   
+    %% (g) SINR Adaptive
+    if UE(1).active && UE(2).active
+        rx1 = collector(sig1,ang_matrix(:,1))';
+        rx2 = collector(sig2,ang_matrix(:,2))';
+
+        P_s1 = mean(abs(UE(1).weights'*rx1).^2);
+        P_i1 = mean(abs(UE(1).weights'*rx2).^2);
+        P_n1 = Pars.sigma2*(UE(1).weights'*UE(1).weights);
+        SINR_UE1(currentFrame) = P_s1/(P_i1+P_n1);
+        SINR_UE1_dB(currentFrame)=10*log10(SINR_UE1(currentFrame));
+    end
+
+    if UE(1).active && UE(2).active
+        rx1 = collector(sig1,ang_matrix(:,1))';
+        rx2 = collector(sig2,ang_matrix(:,2))';
+
+        P_s2 = mean(abs(UE(2).weights'*rx2).^2);
+        P_i2 = mean(abs(UE(2).weights'*rx1).^2);
+        P_n2 = Pars.sigma2*(UE(2).weights'*UE(2).weights);
+        SINR_UE2(currentFrame)=P_s2/(P_i2+P_n2);
+        SINR_UE2_dB(currentFrame)=10*log10(SINR_UE2(currentFrame));
     end
     
     %% Store
@@ -233,7 +270,7 @@ for currentFrame = 1:Pars.numFrame
     StoredData.validFrames = currentFrame;
     
     %% Visualization
-    if mod(currentFrame, 5) == 0
+    if mod(currentFrame, 2) == 0
         time_axis = (1:currentFrame)*Pars.PhysicsStep;
         
         % 1. Geometry
@@ -243,8 +280,8 @@ for currentFrame = 1:Pars.numFrame
         addpoints(hTrail2, Geometry.V2Pos(1), Geometry.V2Pos(2), Geometry.V2Pos(3));
         
         % 2. Lines (SINR & Power)
-        % set(hSINR_line, 'XData', time_axis, 'YData', SINR_UE1_dB(1:currentFrame));
-        % set(hSINR_line2, 'XData', time_axis, 'YData', SINR_UE2_dB(1:currentFrame));
+        set(hSINR_line, 'XData', time_axis, 'YData', SINR_UE1_dB(1:currentFrame));
+        set(hSINR_line2, 'XData', time_axis, 'YData', SINR_UE2_dB(1:currentFrame));
         set(hPow_line1, 'XData', time_axis, 'YData', StoredData.P_UE1(1:currentFrame));
         set(hPow_line2, 'XData', time_axis, 'YData', StoredData.P_UE2(1:currentFrame));
         
@@ -329,7 +366,7 @@ sData.steeringVec = steeringVec;
 sData.scan_az = scan_az; sData.scan_el = scan_el;
 sData.hPlotV1 = hPlotV1; sData.hPlotV2 = hPlotV2;
 sData.hTrail1 = hTrail1; sData.hTrail2 = hTrail2;
-% sData.hSINR_line = hSINR_line; sData.hSINR_line2 = hSINR_line2;
+sData.hSINR_line = hSINR_line; sData.hSINR_line2 = hSINR_line2;
 sData.hPow_line1 = hPow_line1; sData.hPow_line2 = hPow_line2;
 sData.hPlotPat1_Az = hPlotPat1_Az; sData.hLineV1_Az = hLineV1_Az;
 sData.hPlotPat1_El = hPlotPat1_El; sData.hLineV1_El = hLineV1_El;
@@ -367,7 +404,7 @@ function updatePlotsFinal(src, ~)
     end
     
     % Lines
-    tAx = (1:d.totalFrames) * d.Pars.PhysicsStep;
+    % tAx = (1:d.totalFrames) * d.Pars.PhysicsStep;
     subplot(2,5,3); hold on;
     plot(currT, d.SINR_UE1_dB(f), 'bo', 'MarkerFaceColor', 'b');
     plot(currT, d.SINR_UE2_dB(f), 'ro', 'MarkerFaceColor', 'r');
