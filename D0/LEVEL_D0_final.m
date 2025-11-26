@@ -162,6 +162,7 @@ StoredData.validFrames = 0;
 % 10log10(kT0) = -174 dBm/Hz with T0 = 293.15 °K
 %-30 to convert from dBm to dB
 Pars.sigma2 = db2pow(-174 + 10*log10(Pars.Temp_ant/293.15) + 10*log10(1e5)-30 + Pars.NoiseFactor);
+
 %% 7) MAIN LOOP
 scan_az = -90:0.5:90;
 sv_scan = steeringVec(Pars.fc, [scan_az; zeros(1, numel(scan_az))]);
