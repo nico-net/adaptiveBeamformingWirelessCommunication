@@ -184,7 +184,7 @@ hold(ax1,'on'); grid(ax1,'on');
 xlabel('X [m]'); ylabel('Y [m]'); zlabel('Z [m]');
 title('3D Scenario (BS + UE1 + UE2)');
 axis equal;
-xlim([-20 80]); ylim([-40 40]); zlim([0 20]);
+xlim([-20 80]); ylim([-40 40]); zlim([0 30]);
 
 BSplot = plot3(BS.pos(1), BS.pos(2), BS.pos(3), 'r^', ...
     'MarkerSize', 10, 'MarkerFaceColor', 'r', 'DisplayName','BS');
