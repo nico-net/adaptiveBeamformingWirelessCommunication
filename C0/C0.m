@@ -1,0 +1,466 @@
+close all;
+clear;
+clc;
+
+%% ============================================================
+%%  SCRIPT 3D - LMS
+%%  - Dual Cut (Az/El) for all users + Combined
+%% ============================================================
+
+%% 1) System Parameters
+Pars.fc = 1e9;
+Pars.c = physconst('LightSpeed');
+Pars.lambda = Pars.c / Pars.fc;
+Pars.Fsample = 100e3;
+Pars.Ts = 1/Pars.Fsample;
+Pars.SnapshotsPerFrame = 500;
+Pars.TsVect = (0:Pars.SnapshotsPerFrame-1)*Pars.Ts;
+Pars.TotalTime_s = 40;
+Pars.PhysicsStep = 0.05;
+Pars.numFrame = ceil(Pars.TotalTime_s / Pars.PhysicsStep);
+dt = Pars.PhysicsStep;
+
+Pars.Temp_ant = 293.15;
+Pars.NoiseFactor = 5;
+Pars.speed1_kmh = 30;
+Pars.speed2_kmh = 30;
+Pars.v1_ms = Pars.speed1_kmh*(1000/3600);
+Pars.v2_ms = Pars.speed2_kmh*(1000/3600);
+
+waveform1 = exp(1j*(2*pi*(Pars.fc)*Pars.TsVect + pi/6)).';
+waveform2 = exp(1j*(2*pi*(Pars.fc + 1e3)*Pars.TsVect + pi/3)).';
+
+SINR_UE1_dB = zeros(Pars.numFrame, 1);
+SINR_UE2_dB = zeros(Pars.numFrame, 1);
+
+%% 2) Geometry + Array URA
+N_Row = 16; 
+N_Col = 16;
+N_Elements = N_Row * N_Col;
+xpolElement = phased.CrossedDipoleAntennaElement(...
+    'FrequencyRange', [1e9 6e9]);
+Geometry.BSarray = phased.URA('Size',[N_Row N_Col], ...
+    'ElementSpacing', [Pars.lambda/2 Pars.lambda/2], 'Element',xpolElement);
+% Geometry.BSarray = phased.URA('Size',[N_Row N_Col], ...
+%     'ElementSpacing', [Pars.lambda/2 Pars.lambda/2]);
+
+Geometry.BSPos = [0; 0; 25];    
+Geometry.V1Pos = [40; 60; 1.5];   
+Geometry.V2Pos = [60; -20; 1.5];  
+
+dir1 = [0; -1; 1]; dir1 = dir1/norm(dir1);
+dir2 = [1; 0.5; 0]; dir2 = dir2/norm(dir2);
+Geometry.V1Vel = Pars.v1_ms * dir1;
+Geometry.V2Vel = Pars.v2_ms * dir2;
+
+steeringVec = phased.SteeringVector('SensorArray', Geometry.BSarray,...
+    'PropagationSpeed', Pars.c);
+
+%% 3) UE STRUCT
+UE_template = struct('id',[],'active',false,'pos',[NaN;NaN;NaN],...
+    'vel',[0;0;0],'DOA',[0;0],'DOA_prev',[0;0],'DOA_variation',0,...
+    'SNR',NaN,'power',NaN,'lastUpdate',0,'nextUpdate',0,...
+    'weights',ones(N_Elements,1),'output',[],'state','idle','lifetime',0);
+
+maxUsers = 2;
+UE = repmat(UE_template,maxUsers,1);
+for k=1:maxUsers, UE(k).id=k; end
+
+%% 4) Objects
+freeSpace = phased.FreeSpace('OperatingFrequency',Pars.fc,...
+    'SampleRate',Pars.Fsample,'TwoWayPropagation',false);
+collector = phased.Collector('Sensor',Geometry.BSarray,...
+    'OperatingFrequency',Pars.fc);
+
+%% 5) Visualization LAYOUT 
+fig = figure; set(fig,'WindowState','maximized');
+sgtitle('3D Beamforming Dashboard: Azimuth, Elevation, Power & Combined')
+
+% 3D MAP
+subplot(2,5,[1 2]);
+plot3(Geometry.BSPos(1),Geometry.BSPos(2),Geometry.BSPos(3),...
+    'k^','MarkerSize',12,'LineWidth',3,'MarkerFaceColor','y'); hold on;
+hPlotV1 = plot3(Geometry.V1Pos(1),Geometry.V1Pos(2),Geometry.V1Pos(3),...
+    'bo','MarkerFaceColor','b');
+hPlotV2 = plot3(Geometry.V2Pos(1),Geometry.V2Pos(2),Geometry.V2Pos(3),...
+    'rs','MarkerFaceColor','r');
+plot3([Geometry.BSPos(1) Geometry.BSPos(1)], [Geometry.BSPos(2) Geometry.BSPos(2)], ...
+      [0 Geometry.BSPos(3)], 'k--'); 
+hTrail1 = animatedline('Color','b','LineStyle',':');
+hTrail2 = animatedline('Color','r','LineStyle',':');
+grid on; axis equal; view(45, 30);
+xlabel('X'); ylabel('Y'); zlabel('Z');
+title('3D Scenario'); axis([-30 300 -200 200 0 150]);
+
+% SINR
+subplot(2,5,6);
+hSINR_line = plot(NaN,NaN,'b-','LineWidth',2); hold on;
+hSINR_line2 = plot(NaN,NaN,'r-','LineWidth',2);
+grid on; xlabel('Time [s]'); ylabel('dB');
+title('SINR'); xlim([0 Pars.TotalTime_s]); ylim([-10 30]);
+
+% POWER
+subplot(2,5,7);
+hPow_line1 = plot(NaN,NaN,'b-','LineWidth',1.5); hold on;
+hPow_line2 = plot(NaN,NaN,'r-','LineWidth',1.5);
+grid on; xlabel('Time [s]'); ylabel('Linear Power');
+title('Rx Power'); xlim([0 Pars.TotalTime_s]);
+
+% COMBINED AZIMUTH
+subplot(2,5,5);
+hPlotPatTot_Az = polarplot(NaN,NaN,'m','LineWidth',2); hold on;
+title('Comb. \phi [deg]'); rlim([-40 0]);  thetalim([-90 90]);
+
+% UE 1 Patterns
+subplot(2,5,3); 
+hPlotPat1_Az = polarplot(NaN,NaN,'b','LineWidth',2); hold on;
+hLineV1_Az = polarplot([0 0],[0 -40],'k--'); title('UE1 \phi [deg]'); rlim([-40 0]); thetalim([-90 90]);
+
+subplot(2,5,8);
+hPlotPat1_El = polarplot(NaN,NaN,'b','LineWidth',2); hold on;
+hLineV1_El = polarplot([0 0],[0 -40],'k--'); title('UE1 \theta [deg]'); rlim([-40 0]); thetalim([-90 90]);
+
+% UE 2 Patterns
+subplot(2,5,4); 
+hPlotPat2_Az = polarplot(NaN,NaN,'r','LineWidth',2); hold on;
+hLineV2_Az = polarplot([0 0],[0 -40],'k--'); title('UE2 \phi [deg]'); rlim([-40 0]); thetalim([-90 90]);
+
+subplot(2,5,9); 
+hPlotPat2_El = polarplot(NaN,NaN,'r','LineWidth',2); hold on;
+hLineV2_El = polarplot([0 0],[0 -40],'k--'); title('UE2 \theta [deg]'); rlim([-40 0]); thetalim([-90 90]);
+
+% COMBINED ELEVATION
+subplot(2,5,10);
+hPlotPatTot_El = polarplot(NaN,NaN,'m','LineWidth',2); hold on;
+title('Comb. Elevation [deg]'); rlim([-40 0]); thetalim([-90 90]);
+
+
+%% 6) Storage for replay
+StoredData.V1Pos = zeros(3,Pars.numFrame);
+StoredData.V2Pos = zeros(3,Pars.numFrame);
+StoredData.UE1_weights = zeros(N_Elements,Pars.numFrame);
+StoredData.UE2_weights = zeros(N_Elements,Pars.numFrame);
+StoredData.ang_matrix = zeros(2,2,Pars.numFrame);
+StoredData.P_UE1 = zeros(1,Pars.numFrame);
+StoredData.P_UE2 = zeros(1,Pars.numFrame);
+StoredData.didUpdate = false(1,Pars.numFrame);
+StoredData.validFrames = 0;
+
+% Noise Power Computation
+Pars.sigma2 = db2pow(-174 + 10*log10(Pars.Temp_ant/293.15) + ...
+    10*log10(1e5)-30 + Pars.NoiseFactor);
+
+%% 7) MAIN LOOP
+scan_az = -180:1:180;
+scan_el = -90:1:90; 
+
+for currentFrame = 1:Pars.numFrame
+    
+    %% (a) Physics
+    Geometry.V1Pos = Geometry.V1Pos + Geometry.V1Vel*dt;
+    Geometry.V2Pos = Geometry.V2Pos + Geometry.V2Vel*dt;
+
+    UE(1).pos = Geometry.V1Pos; UE(1).vel = Geometry.V1Vel;
+    UE(2).pos = Geometry.V2Pos; UE(2).vel = Geometry.V2Vel;
+
+    if Geometry.V1Pos(1) > 120
+        break;
+    end
+
+    %% (b) Channel
+    sig1 = freeSpace(waveform1,Geometry.V1Pos,Geometry.BSPos,Geometry.V1Vel,[0;0;0]);
+    sig2 = freeSpace(waveform2,Geometry.V2Pos,Geometry.BSPos,Geometry.V2Vel,[0;0;0]);
+
+    vec1 = Geometry.V1Pos - Geometry.BSPos;
+    vec2 = Geometry.V2Pos - Geometry.BSPos;
+    
+    ang1_az = rad2deg(atan2(vec1(2), vec1(1)));
+    ang1_el = rad2deg(atan2(vec1(3), sqrt(vec1(1)^2 + vec1(2)^2)));
+    
+    ang2_az = rad2deg(atan2(vec2(2), vec2(1)));
+    ang2_el = rad2deg(atan2(vec2(3), sqrt(vec2(1)^2 + vec2(2)^2)));
+    
+    ang_matrix = [ang1_az ang2_az; ang1_el ang2_el];
+
+    rx_clean = collector([sig1,sig2],ang_matrix);
+
+    %% (c) Noise
+    noise = sqrt(Pars.sigma2/2)*(randn(size(rx_clean))+1j*randn(size(rx_clean)));
+    rx_signal = rx_clean + noise;
+
+    %% (d) MDL
+    R = (rx_signal * rx_signal') / size(rx_signal, 2);
+    eigvals = sort(real(eig(R)), 'descend');
+    eigvals(eigvals < 0) = eps;
+
+    M = size(R,1);
+    Nsnap = size(rx_signal,2);
+    mdl = zeros(M,1);
+
+    for k = 0:M-1
+        gm = geomean(eigvals(k+1:end));
+        am = mean(eigvals(k+1:end));
+        mdl(k+1) = -Nsnap*(M-k)*log(gm/am) + 0.5*k*(2*M-k)*log(Nsnap);
+    end
+
+    [~, idx] = min(mdl);
+    numUsers_est = idx-1;
+    numUsers_est = min(max(numUsers_est,0), maxUsers);
+
+    %% (e) DOA known
+    for k=1:maxUsers
+        UE(k).active = true;
+        UE(k).DOA = [ang_matrix(1,k); 0];
+        UE(k).DOA_variation = norm(UE(k).DOA - UE(k).DOA_prev);
+        UE(k).lifetime = UE(k).lifetime + 1;
+    end
+
+    %% (f) LMS beamforming update logic
+    didUpdateNow = false;
+    if UE(k).DOA_variation > 1
+        didUpdateNow = true;
+        UE(k).DOA_prev = UE(k).DOA;
+
+        [N,L] = size(rx_signal);
+        for k=1:maxUsers
+            UE(k).weights = zeros(L,1);
+        end
+
+        for k=1:maxUsers
+            d_desired = (k==1)*waveform1 + (k~=1)*waveform2;
+            w = UE(k).weights;
+            y_out = zeros(N,1);
+
+            for n = 1:N
+                x = rx_signal(n,:).';
+                mu = trace(x*x');
+                y = w' * x;
+                e = d_desired(n) - y;
+                w = w + mu * x * conj(e);
+                y_out(n) = y;
+            end
+
+            UE(k).weights = w;
+            UE(k).output = y_out.';
+            UE(k).power = mean(abs(y_out).^2);
+        end
+    end
+    StoredData.P_UE1(currentFrame) = UE(1).power;
+    StoredData.P_UE2(currentFrame) = UE(2).power; 
+    StoredData.didUpdate(currentFrame) = didUpdateNow;
+   
+    %% (g) SINR Adaptive
+    if UE(1).active && UE(2).active
+        rx1 = collector(sig1,ang_matrix(:,1))';
+        rx2 = collector(sig2,ang_matrix(:,2))';
+
+        P_s1 = mean(abs(UE(1).weights'*rx1).^2);
+        P_i1 = mean(abs(UE(1).weights'*rx2).^2);
+        P_n1 = Pars.sigma2*(UE(1).weights'*UE(1).weights);
+        SINR_UE1(currentFrame) = P_s1/(P_i1+P_n1);
+        SINR_UE1_dB(currentFrame)=10*log10(SINR_UE1(currentFrame));
+    end
+
+    if UE(1).active && UE(2).active
+        rx1 = collector(sig1,ang_matrix(:,1))';
+        rx2 = collector(sig2,ang_matrix(:,2))';
+
+        P_s2 = mean(abs(UE(2).weights'*rx2).^2);
+        P_i2 = mean(abs(UE(2).weights'*rx1).^2);
+        P_n2 = Pars.sigma2*(UE(2).weights'*UE(2).weights);
+        SINR_UE2(currentFrame)=P_s2/(P_i2+P_n2);
+        SINR_UE2_dB(currentFrame)=10*log10(SINR_UE2(currentFrame));
+    end
+    
+    %% Store
+    StoredData.V1Pos(:,currentFrame) = Geometry.V1Pos;
+    StoredData.V2Pos(:,currentFrame) = Geometry.V2Pos;
+    StoredData.UE1_weights(:,currentFrame) = UE(1).weights;
+    StoredData.UE2_weights(:,currentFrame) = UE(2).weights;
+    StoredData.ang_matrix(:,:,currentFrame) = ang_matrix;
+    StoredData.validFrames = currentFrame;
+    
+    %% Visualization
+    if mod(currentFrame, 2) == 0
+        time_axis = (1:currentFrame)*Pars.PhysicsStep;
+        
+        % 1. Geometry
+        set(hPlotV1, 'XData', Geometry.V1Pos(1), 'YData', Geometry.V1Pos(2), 'ZData', Geometry.V1Pos(3));
+        set(hPlotV2, 'XData', Geometry.V2Pos(1), 'YData', Geometry.V2Pos(2), 'ZData', Geometry.V2Pos(3));
+        addpoints(hTrail1, Geometry.V1Pos(1), Geometry.V1Pos(2), Geometry.V1Pos(3));
+        addpoints(hTrail2, Geometry.V2Pos(1), Geometry.V2Pos(2), Geometry.V2Pos(3));
+        
+        % 2. Lines (SINR & Power)
+        set(hSINR_line, 'XData', time_axis, 'YData', SINR_UE1_dB(1:currentFrame));
+        set(hSINR_line2, 'XData', time_axis, 'YData', SINR_UE2_dB(1:currentFrame));
+        set(hPow_line1, 'XData', time_axis, 'YData', StoredData.P_UE1(1:currentFrame));
+        set(hPow_line2, 'XData', time_axis, 'YData', StoredData.P_UE2(1:currentFrame));
+        
+        % 3. Patterns
+        cur_az1 = ang_matrix(1,1); cur_el1 = ang_matrix(2,1);
+        cur_az2 = ang_matrix(1,2); cur_el2 = ang_matrix(2,2);
+        
+        % -- Azimuth Cuts (Fixed El) --
+        sv_az1 = steeringVec(Pars.fc, [scan_az; ones(1,numel(scan_az))*cur_el1]);
+        sv_az2 = steeringVec(Pars.fc, [scan_az; ones(1,numel(scan_az))*cur_el2]);
+        
+        pat_az1_lin = abs(UE(1).weights' * sv_az1).^2;
+        pat_az2_lin = abs(UE(2).weights' * sv_az2).^2;
+        
+        % Combined Azimuth (interference check)
+        % Note: summing power is a good approximation for non-coherent interference
+        pat_tot_az = 10*log10(pat_az1_lin + pat_az2_lin + eps);
+        pat_tot_az = pat_tot_az - max(pat_tot_az);
+        
+        pat_az1 = 10*log10(pat_az1_lin + eps); pat_az1 = pat_az1 - max(pat_az1);
+        pat_az2 = 10*log10(pat_az2_lin + eps); pat_az2 = pat_az2 - max(pat_az2);
+        
+        set(hPlotPat1_Az, 'ThetaData', deg2rad(scan_az), 'RData', pat_az1);
+        set(hLineV1_Az, 'ThetaData', [deg2rad(cur_az1) deg2rad(cur_az1)]);
+        set(hPlotPat2_Az, 'ThetaData', deg2rad(scan_az), 'RData', pat_az2);
+        set(hLineV2_Az, 'ThetaData', [deg2rad(cur_az2) deg2rad(cur_az2)]);
+        set(hPlotPatTot_Az, 'ThetaData', deg2rad(scan_az), 'RData', pat_tot_az);
+        
+        % -- Elevation Cuts (Fixed Az) --
+        sv_el1 = steeringVec(Pars.fc, [ones(1,numel(scan_el))*cur_az1; scan_el]);
+        sv_el2 = steeringVec(Pars.fc, [ones(1,numel(scan_el))*cur_az2; scan_el]);
+        
+        pat_el1_lin = abs(UE(1).weights' * sv_el1).^2;
+        pat_el2_lin = abs(UE(2).weights' * sv_el2).^2;
+        
+        pat_tot_el = 10*log10(pat_el1_lin + pat_el2_lin + eps);
+        pat_tot_el = pat_tot_el - max(pat_tot_el);
+        
+        pat_el1 = 10*log10(pat_el1_lin + eps); pat_el1 = pat_el1 - max(pat_el1);
+        pat_el2 = 10*log10(pat_el2_lin + eps); pat_el2 = pat_el2 - max(pat_el2);
+        
+        set(hPlotPat1_El, 'ThetaData', deg2rad(scan_el), 'RData', pat_el1);
+        set(hLineV1_El, 'ThetaData', [deg2rad(cur_el1) deg2rad(cur_el1)]);
+        set(hPlotPat2_El, 'ThetaData', deg2rad(scan_el), 'RData', pat_el2);
+        set(hLineV2_El, 'ThetaData', [deg2rad(cur_el2) deg2rad(cur_el2)]);
+        set(hPlotPatTot_El, 'ThetaData', deg2rad(scan_el), 'RData', pat_tot_el);
+        
+        drawnow limitrate;
+    end
+end
+
+%% 8) Slider Replay
+totalFrames = StoredData.validFrames;
+% Trim
+StoredData.V1Pos = StoredData.V1Pos(:, 1:totalFrames);
+StoredData.V2Pos = StoredData.V2Pos(:, 1:totalFrames);
+StoredData.UE1_weights = StoredData.UE1_weights(:, 1:totalFrames);
+StoredData.UE2_weights = StoredData.UE2_weights(:, 1:totalFrames);
+StoredData.ang_matrix = StoredData.ang_matrix(:, :, 1:totalFrames);
+StoredData.P_UE1 = StoredData.P_UE1(1:totalFrames);
+StoredData.P_UE2 = StoredData.P_UE2(1:totalFrames);
+SINR_UE1_dB = SINR_UE1_dB(1:totalFrames);
+SINR_UE2_dB = SINR_UE2_dB(1:totalFrames);
+
+sliderPanel = uipanel(fig, 'Position', [0.05 0.01 0.9 0.05], 'BorderType', 'none');
+timeSlider = uicontrol(sliderPanel, 'Style', 'slider', ...
+    'Units', 'normalized', 'Position', [0.1 0.3 0.75 0.4], ...
+    'Min', 1, 'Max', totalFrames, 'Value', totalFrames, ...
+    'SliderStep', [1/(totalFrames-1), 10/(totalFrames-1)]);
+timeLabel = uicontrol(sliderPanel, 'Style', 'text', ...
+    'Units', 'normalized', 'Position', [0.86 0.2 0.12 0.6], ...
+    'String', sprintf('t = %.2f s', totalFrames*Pars.PhysicsStep), ...
+    'FontSize', 10, 'HorizontalAlignment', 'left');
+
+% Payload
+sData.totalFrames = totalFrames;
+sData.StoredData = StoredData;
+sData.Pars = Pars;
+sData.SINR_UE1_dB = SINR_UE1_dB;
+sData.SINR_UE2_dB = SINR_UE2_dB;
+sData.steeringVec = steeringVec;
+sData.scan_az = scan_az; sData.scan_el = scan_el;
+sData.hPlotV1 = hPlotV1; sData.hPlotV2 = hPlotV2;
+sData.hTrail1 = hTrail1; sData.hTrail2 = hTrail2;
+sData.hSINR_line = hSINR_line; sData.hSINR_line2 = hSINR_line2;
+sData.hPow_line1 = hPow_line1; sData.hPow_line2 = hPow_line2;
+sData.hPlotPat1_Az = hPlotPat1_Az; sData.hLineV1_Az = hLineV1_Az;
+sData.hPlotPat1_El = hPlotPat1_El; sData.hLineV1_El = hLineV1_El;
+sData.hPlotPat2_Az = hPlotPat2_Az; sData.hLineV2_Az = hLineV2_Az;
+sData.hPlotPat2_El = hPlotPat2_El; sData.hLineV2_El = hLineV2_El;
+sData.hPlotPatTot_Az = hPlotPatTot_Az;
+sData.hPlotPatTot_El = hPlotPatTot_El;
+sData.timeLabel = timeLabel;
+
+timeSlider.UserData = sData;
+timeSlider.Callback = @updatePlotsFinal;
+fprintf('Simulazione Completa con grafici di Potenza e Pattern Combinati.\n');
+
+%% Callback
+function updatePlotsFinal(src, ~)
+    d = src.UserData;
+    f = round(src.Value);
+    if f < 1, f = 1; end
+    if f > d.totalFrames, f = d.totalFrames; end
+    
+    currT = f * d.Pars.PhysicsStep;
+    set(d.timeLabel, 'String', sprintf('t = %.2f s', currT));
+    
+    % Geo
+    V1 = d.StoredData.V1Pos(:, f);
+    V2 = d.StoredData.V2Pos(:, f);
+    set(d.hPlotV1, 'XData', V1(1), 'YData', V1(2), 'ZData', V1(3));
+    set(d.hPlotV2, 'XData', V2(1), 'YData', V2(2), 'ZData', V2(3));
+    
+    clearpoints(d.hTrail1); clearpoints(d.hTrail2);
+    sK = max(1, f-100);
+    for k=sK:f
+        addpoints(d.hTrail1, d.StoredData.V1Pos(1,k), d.StoredData.V1Pos(2,k), d.StoredData.V1Pos(3,k));
+        addpoints(d.hTrail2, d.StoredData.V2Pos(1,k), d.StoredData.V2Pos(2,k), d.StoredData.V2Pos(3,k));
+    end
+    
+    % Lines
+    % tAx = (1:d.totalFrames) * d.Pars.PhysicsStep;
+    subplot(2,5,3); hold on;
+    plot(currT, d.SINR_UE1_dB(f), 'bo', 'MarkerFaceColor', 'b');
+    plot(currT, d.SINR_UE2_dB(f), 'ro', 'MarkerFaceColor', 'r');
+    subplot(2,5,4); hold on;
+    plot(currT, d.StoredData.P_UE1(f), 'bo', 'MarkerFaceColor', 'b');
+    plot(currT, d.StoredData.P_UE2(f), 'ro', 'MarkerFaceColor', 'r');
+    
+    % Patterns
+    w1 = d.StoredData.UE1_weights(:, f);
+    w2 = d.StoredData.UE2_weights(:, f);
+    ang = d.StoredData.ang_matrix(:, :, f);
+    c_a1 = ang(1,1); c_e1 = ang(2,1);
+    c_a2 = ang(1,2); c_e2 = ang(2,2);
+    
+    % Az
+    sv_a1 = d.steeringVec(d.Pars.fc, [d.scan_az; ones(1,numel(d.scan_az))*c_e1]);
+    sv_a2 = d.steeringVec(d.Pars.fc, [d.scan_az; ones(1,numel(d.scan_az))*c_e2]);
+    p_a1_lin = abs(w1'*sv_a1).^2;
+    p_a2_lin = abs(w2'*sv_a2).^2;
+    
+    p_tot_a = 10*log10(p_a1_lin+p_a2_lin+eps); p_tot_a = p_tot_a - max(p_tot_a);
+    p_a1 = 10*log10(p_a1_lin+eps); p_a1 = p_a1 - max(p_a1);
+    p_a2 = 10*log10(p_a2_lin+eps); p_a2 = p_a2 - max(p_a2);
+    
+    set(d.hPlotPat1_Az, 'ThetaData', deg2rad(d.scan_az), 'RData', p_a1);
+    set(d.hLineV1_Az, 'ThetaData', [deg2rad(c_a1) deg2rad(c_a1)]);
+    set(d.hPlotPat2_Az, 'ThetaData', deg2rad(d.scan_az), 'RData', p_a2);
+    set(d.hLineV2_Az, 'ThetaData', [deg2rad(c_a2) deg2rad(c_a2)]);
+    set(d.hPlotPatTot_Az, 'ThetaData', deg2rad(d.scan_az), 'RData', p_tot_a);
+    
+    % El
+    sv_e1 = d.steeringVec(d.Pars.fc, [ones(1,numel(d.scan_el))*c_a1; d.scan_el]);
+    sv_e2 = d.steeringVec(d.Pars.fc, [ones(1,numel(d.scan_el))*c_a2; d.scan_el]);
+    p_e1_lin = abs(w1'*sv_e1).^2;
+    p_e2_lin = abs(w2'*sv_e2).^2;
+    
+    p_tot_e = 10*log10(p_e1_lin+p_e2_lin+eps); p_tot_e = p_tot_e - max(p_tot_e);
+    p_e1 = 10*log10(p_e1_lin+eps); p_e1 = p_e1 - max(p_e1);
+    p_e2 = 10*log10(p_e2_lin+eps); p_e2 = p_e2 - max(p_e2);
+    
+    set(d.hPlotPat1_El, 'ThetaData', deg2rad(d.scan_el), 'RData', p_e1);
+    set(d.hLineV1_El, 'ThetaData', [deg2rad(c_e1) deg2rad(c_e1)]);
+    set(d.hPlotPat2_El, 'ThetaData', deg2rad(d.scan_el), 'RData', p_e2);
+    set(d.hLineV2_El, 'ThetaData', [deg2rad(c_e2) deg2rad(c_e2)]);
+    set(d.hPlotPatTot_El, 'ThetaData', deg2rad(d.scan_el), 'RData', p_tot_e);
+    
+    drawnow;
+end
