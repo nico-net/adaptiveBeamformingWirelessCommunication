@@ -4,14 +4,20 @@ close all; clear; clc;
 %  1) OFDM WAVEFORM
 %% =======================
 pilotIndices = [12;26;40;54];
+scs = 1e6;       % subcarrier spacing
+M   = 16;        % 16-QAM
 numSymbols   = 100;
 CPLength     = 16;
 Nfft         = 64;
 Ns           = Nfft + CPLength;
+GuardBands   = [6;6];  %Equal numbers!
+NumCarriersData = Nfft - sum(GuardBands);
+LenSubBands = NumCarriersData/numel(pilotIndices);
+NumBitsPerSymbol = (Nfft-numel(pilotIndices)-sum(GuardBands))*log2(M);
 
 ofdmMod = comm.OFDMModulator( ...
     'FFTLength', Nfft, ...
-    'NumGuardBandCarriers', [6;5], ...
+    'NumGuardBandCarriers', GuardBands, ...
     'InsertDCNull', false, ...
     'CyclicPrefixLength', CPLength, ...
     'Windowing', false, ...
@@ -21,10 +27,7 @@ ofdmMod = comm.OFDMModulator( ...
     'PilotInputPort', true, ...
     'PilotCarrierIndices', pilotIndices);
 
-scs = 1e6;       % subcarrier spacing
-M   = 16;        % 16-QAM
-
-in = randi([0 1], 19600, 1);
+in = randi([0 1], numSymbols*NumBitsPerSymbol, 1);
 dataInput = qammod(in, M, 'gray', 'InputType', 'bit', 'UnitAveragePower', true);
 
 ofdmInfo  = info(ofdmMod);
@@ -120,7 +123,7 @@ channel = phased.FreeSpace( ...
 %  4) LMS setup (freq-domain)
 %% =======================
 numPilots  = numel(pilotIndices);
-NumOFDMSymbForLMS = 3;
+NumOFDMSymbForLMS = 2;
 d_desired  = zeros(numPilots, ceil(numSymbols/NumOFDMSymbForLMS));
 
 cnt = 1;
@@ -190,17 +193,19 @@ drawnow;
 
 UE_pos_hist = zeros(3, Pars.numFrame);
 
+avgBerTot = 0.5*ones(Pars.numFrame,1);
 %% =======================
 %  7) MAIN LOOP (frames)
 %% =======================
 for frame = 1:Pars.numFrame
+    w = zeros(Nant, numPilots);        % pesi iniziali (Nant x numPilots)
 
     % movimento UE in 3D
     UE.pos = UE.pos + UE.vel * dt;
     UE_pos_hist(:,frame) = UE.pos;
 
     % angoli di arrivo
-    rel = BS.pos - UE.pos;
+    rel = -BS.pos + UE.pos;
     az = rad2deg(atan2(rel(2),rel(1)));
     el = rad2deg(atan2(rel(3), norm(rel(1:2))));
     ang = [az; el];
@@ -211,16 +216,16 @@ for frame = 1:Pars.numFrame
 
     sigma_sq = db2pow(-174 + 10*log10(Pars.noiseTemp/293.15) + Pars.noiseFactor ...
                         +10*log10(Bandwidth)-30);
-    noise = sqrt(sigma_sq/2) * (randn(size(rx_array)) + 1j*randn(size(rx_array)));
+    %noise = sqrt(sigma_sq/2) * (randn(size(rx_array)) + 1j*randn(size(rx_array)));
+    noise = zeros(size(rx_array));
     rx_array = rx_array + noise;
     % LMS sui simboli OFDM (freq-domain, update ogni 3 simboli)
     cntLMS = 1;
     for k = 1:numSymbols
-        idx = (k-1)*Ns + (CPLength+1:CPLength+Nfft);
-        rx_noCP = rx_array(idx, :);                % [64 x Nant]
-        X = fft(rx_noCP);                          % [64 x Nant]
-
         if mod(k,NumOFDMSymbForLMS) == 1
+            idx = (k-1)*Ns + (CPLength+1:CPLength+Nfft);
+            rx_noCP = rx_array(idx, :);                % [64 x Nant]
+            X = fft(rx_noCP);                          % [64 x Nant]
             for p = 1:numPilots
                 Xp = X(pilotIndices(p), :).';      % Nant x 1
                 d  = d_desired(p, cntLMS);         % pilot noto TX (freq)
@@ -233,32 +238,56 @@ for frame = 1:Pars.numFrame
         end
     end
 
-    % average pattern
-    pattern_azK = 0;
-    pattern_elK = 0;
-    for p0 = 1:numel(pilotIndices)
-        pattern_azK = pattern_azK + abs(w(:,p0)' * sv_az).^2;    
-        pattern_elK = pattern_elK + abs(w(:,p0)' * sv_el).^2;        
+% Precompute bits transmitted
+bitGrid = qamdemod(dataInput, M, 'gray', 'OutputType','bit'); 
+% bitGrid(i,k) = bits of subcarrier i, symbol k
+
+ber = zeros(numel(pilotIndices),1);
+
+for p0 = 1:numel(pilotIndices)
+
+    % sub-band around pilot p0
+    interval = pilotIndices(p0)-floor(LenSubBands/2) : ...
+               pilotIndices(p0)+floor(LenSubBands/2);
+    interval = interval(interval>=1 & interval<=Nfft);   % safety
+    %interval(ceil(numel(interval)/2)) = [];
+
+    err_tot = 0;
+    bit_tot = 0;
+
+    for k = 1:numSymbols
+
+        % remove CP
+        idx = (k-1)*Ns + (CPLength+1:CPLength+Nfft);
+        rx_noCP = rx_array(idx,:);     % [64 × Nant]
+
+        % FFT
+        X = fft(rx_noCP);              % [64 × Nant]  
+        X(pilotIndices, :) = [];        % now X = [64 - numPilots] × Nant
+
+        % beamforming su sub-band con pesi del pilot p0
+        Ysb = (w(:,p0)' * X(interval,:).').';  
+        % Ysb -> vector [|interval| × 1]
+
+        % QAM demod
+        bits_est = qamdemod(Ysb, M, 'gray', 'OutputType','bit');
+
+        intBits = (p0-1)*log2(M)*(LenSubBands-1)+1:p0*log2(M)*(LenSubBands-1);
+        % True bits
+        bits_true = bitGrid(intBits, k);
+
+        % Errori
+        err_tot = err_tot + sum(bits_est(:) ~= bits_true(:));
+        bit_tot = bit_tot + numel(bits_true);
+
     end
 
-    pattern_el = pattern_elK/4;
-    pattern_az = pattern_azK/4;
+    ber(p0) = err_tot / bit_tot;
+end
 
-    pattern_azdB = 10*log10(pattern_az / max(pattern_az));
-    pattern_eldB = 10*log10(pattern_el / max(pattern_el));
+avgBerTot(frame) = mean(ber);
 
-    % aggiorna 3D UE/BS
-    set(UEplot, ...
-        'XData', UE_pos_hist(1,1:frame), ...
-        'YData', UE_pos_hist(2,1:frame), ...
-        'ZData', UE_pos_hist(3,1:frame));
-
-    % aggiorna polar azimuth
-    set(azPlot, 'ThetaData', deg2rad(theta), 'RData', pattern_azdB);
-
-    % aggiorna polar elevation
-    set(elPlot, 'ThetaData', deg2rad(phi), 'RData', pattern_eldB);
-
+    
     % info testo
     set(infoText, 'String', sprintf('Frame %d / %d\nTime = %.1f s\nAz = %.1f°, El = %.1f°', ...
         frame, Pars.numFrame, frame*dt, az, el));
@@ -266,3 +295,8 @@ for frame = 1:Pars.numFrame
     drawnow limitrate;
     pause(0.05);
 end
+
+figure;
+plot(avgBerTot);
+yaxis("BER");
+xaxis("numFrame");
