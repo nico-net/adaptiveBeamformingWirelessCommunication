@@ -22,8 +22,8 @@ Pars.Temp_ant = 293.15;
 Pars.NoiseFactor = 5;
 
 % Velocità
-Pars.speed1_kmh = 30;
-Pars.speed2_kmh = 30;
+Pars.speed1_kmh = 5;
+Pars.speed2_kmh = 7;
 Pars.v1_ms = Pars.speed1_kmh*(1000/3600);
 Pars.v2_ms = Pars.speed2_kmh*(1000/3600);
 
@@ -31,11 +31,11 @@ Pars.v2_ms = Pars.speed2_kmh*(1000/3600);
 waveform1 = exp(1j*(2*pi*(Pars.fc)*Pars.TsVect + pi/6)).';
 waveform2 = exp(1j*(2*pi*(Pars.fc + 1e3)*Pars.TsVect + pi/3)).';
 
-% AGGIUNTO: Array SINR
-SINR_UE1 = zeros(Pars.numFrame, 1);
-SINR_UE2 = zeros(Pars.numFrame, 1);
-SINR_UE1_dB = zeros(Pars.numFrame, 1);
-SINR_UE2_dB = zeros(Pars.numFrame, 1);
+% AGGIUNTO: Array SNR
+SNR_UE1 = zeros(Pars.numFrame, 1);
+SNR_UE2 = zeros(Pars.numFrame, 1);
+SNR_UE1_dB = zeros(Pars.numFrame, 1);
+SNR_UE2_dB = zeros(Pars.numFrame, 1);
 
 %% 2) Geometry + Array URA
 N_Row = 16; 
@@ -48,11 +48,11 @@ Geometry.BSarray = phased.URA('Size',[N_Row N_Col], ...
 % Geometry.BSarray = phased.URA('Size',[N_Row N_Col], ...
 %     'ElementSpacing', [Pars.lambda/2 Pars.lambda/2]);
 
-Geometry.BSPos = [0; 0; 25];    
-Geometry.V1Pos = [40; 60; 1.5];   
+Geometry.BSPos = [0; 0; 15];    
+Geometry.V1Pos = [10; 10; 1.5];   
 Geometry.V2Pos = [60; -20; 1.5];  
 
-dir1 = [0; -1; 0.3]; dir1 = dir1/norm(dir1);
+dir1 = [0; -1; 0]; dir1 = dir1/norm(dir1);
 dir2 = [1; 0.5; 0]; dir2 = dir2/norm(dir2);
 Geometry.V1Vel = Pars.v1_ms * dir1;
 Geometry.V2Vel = Pars.v2_ms * dir2;
@@ -126,12 +126,12 @@ c = colorbar; c.Label.String = 'Gain [dB]'; clim([-40 0]);
 hArr1_Tot = quiver3(0,0,0,0,0,0,'b','LineWidth',3,'MaxHeadSize',0.5,'AutoScale','off');
 hArr2_Tot = quiver3(0,0,0,0,0,0,'r','LineWidth',3,'MaxHeadSize',0.5,'AutoScale','off');
 
-% --- 4. SINR (In centro a sinistra) ---
+% --- 4. SNR (In centro a sinistra) ---
 subplot(3,3,4);
-hSINR_line = plot(NaN,NaN,'b-','LineWidth',2); hold on;
-hSINR_line2 = plot(NaN,NaN,'r-','LineWidth',2);
-grid on; xlabel('Time [s]'); ylabel('SINR [dB]');
-title('SINR vs Time'); xlim([0 Pars.TotalTime_s]); ylim([-10 30]);
+hSNR_line = plot(NaN,NaN,'b-','LineWidth',2); hold on;
+hSNR_line2 = plot(NaN,NaN,'r-','LineWidth',2);
+grid on; xlabel('Time [s]'); ylabel('SNR [dB]');
+title('SNR vs Time'); xlim([0 Pars.TotalTime_s]);
 
 % --- 5. UE2 Pattern (In centro al centro) ---
 subplot(3,3,3);
@@ -146,7 +146,7 @@ hArr2_UE2 = quiver3(0,0,0,0,0,0,'r','LineWidth',3,'MaxHeadSize',0.5,'AutoScale',
 subplot(3,3,7);
 hPow_line1 = plot(NaN,NaN,'b-','LineWidth',1.5); hold on;
 hPow_line2 = plot(NaN,NaN,'r-','LineWidth',1.5);
-grid on; xlabel('Time [s]'); ylabel('Power');
+grid on; xlabel('Time [s]'); ylabel('Power [dBm]');
 title('Rx Power (LMS)'); xlim([0 Pars.TotalTime_s]);
 
 
@@ -227,25 +227,23 @@ for currentFrame = 1:Pars.numFrame
         end
     end
     StoredData.didUpdate(currentFrame) = didUpdateNow;
-    StoredData.P_UE1(currentFrame) = UE(1).power;
-    StoredData.P_UE2(currentFrame) = UE(2).power;
+    StoredData.P_UE1(currentFrame) = 10*log10(UE(1).power*1000 + eps);  % Converti in dBm
+    StoredData.P_UE2(currentFrame) = 10*log10(UE(2).power*1000 + eps);  % Converti in dBm
     
-    %% SINR Calculation - AGGIUNTO
+    %% SNR Calculation - AGGIUNTO
     if UE(1).active && UE(2).active
         rx1 = collector(sig1, ang_matrix(:,1))';
         rx2 = collector(sig2, ang_matrix(:,2))';
 
         P_s1 = mean(abs(UE(1).weights'*rx1).^2);
-        P_i1 = mean(abs(UE(1).weights'*rx2).^2);
         P_n1 = Pars.sigma2*(UE(1).weights'*UE(1).weights);
-        SINR_UE1(currentFrame) = P_s1/(P_i1+P_n1);
-        SINR_UE1_dB(currentFrame) = 10*log10(SINR_UE1(currentFrame));
+        SNR_UE1(currentFrame) = P_s1/P_n1;
+        SNR_UE1_dB(currentFrame) = 10*log10(SNR_UE1(currentFrame));
 
         P_s2 = mean(abs(UE(2).weights'*rx2).^2);
-        P_i2 = mean(abs(UE(2).weights'*rx1).^2);
         P_n2 = Pars.sigma2*(UE(2).weights'*UE(2).weights);
-        SINR_UE2(currentFrame) = P_s2/(P_i2+P_n2);
-        SINR_UE2_dB(currentFrame) = 10*log10(SINR_UE2(currentFrame));
+        SNR_UE2(currentFrame) = P_s2/P_n2;
+        SNR_UE2_dB(currentFrame) = 10*log10(SNR_UE2(currentFrame));
     end
     
     %% Store
@@ -266,9 +264,9 @@ for currentFrame = 1:Pars.numFrame
         addpoints(hTrail1, Geometry.V1Pos(1), Geometry.V1Pos(2), Geometry.V1Pos(3));
         addpoints(hTrail2, Geometry.V2Pos(1), Geometry.V2Pos(2), Geometry.V2Pos(3));
         
-        % SINR Lines
-        set(hSINR_line, 'XData', time_axis, 'YData', SINR_UE1_dB(1:currentFrame));
-        set(hSINR_line2, 'XData', time_axis, 'YData', SINR_UE2_dB(1:currentFrame));
+        % SNR Lines
+        set(hSNR_line, 'XData', time_axis, 'YData', SNR_UE1_dB(1:currentFrame));
+        set(hSNR_line2, 'XData', time_axis, 'YData', SNR_UE2_dB(1:currentFrame));
         
         % Power Lines - AGGIUNTO
         set(hPow_line1, 'XData', time_axis, 'YData', StoredData.P_UE1(1:currentFrame));
@@ -334,8 +332,8 @@ StoredData.UE2_weights = StoredData.UE2_weights(:, 1:totalFrames);
 StoredData.ang_matrix = StoredData.ang_matrix(:, :, 1:totalFrames);
 StoredData.P_UE1 = StoredData.P_UE1(1:totalFrames);
 StoredData.P_UE2 = StoredData.P_UE2(1:totalFrames);
-SINR_UE1_dB = SINR_UE1_dB(1:totalFrames);  % AGGIUNTO
-SINR_UE2_dB = SINR_UE2_dB(1:totalFrames);  % AGGIUNTO
+SNR_UE1_dB = SNR_UE1_dB(1:totalFrames);  % AGGIUNTO
+SNR_UE2_dB = SNR_UE2_dB(1:totalFrames);  % AGGIUNTO
 
 sliderPanel = uipanel(fig, 'Position', [0.05 0.01 0.9 0.05], 'BorderType', 'none');
 timeSlider = uicontrol(sliderPanel, 'Style', 'slider', ...
@@ -364,10 +362,10 @@ sData.hArr1_UE1 = hArr1_UE1;
 sData.hArr2_UE2 = hArr2_UE2;
 sData.hArr1_Tot = hArr1_Tot; sData.hArr2_Tot = hArr2_Tot;
 sData.timeLabel = timeLabel;
-sData.SINR_UE1_dB = SINR_UE1_dB;  % AGGIUNTO
-sData.SINR_UE2_dB = SINR_UE2_dB;  % AGGIUNTO
-sData.hSINR_line = hSINR_line;    % AGGIUNTO
-sData.hSINR_line2 = hSINR_line2;  % AGGIUNTO
+sData.SNR_UE1_dB = SNR_UE1_dB;  % AGGIUNTO
+sData.SNR_UE2_dB = SNR_UE2_dB;  % AGGIUNTO
+sData.hSNR_line = hSNR_line;    % AGGIUNTO
+sData.hSNR_line2 = hSNR_line2;  % AGGIUNTO
 
 timeSlider.UserData = sData;
 timeSlider.Callback = @updatePlotsFinal3D;
@@ -397,10 +395,10 @@ function updatePlotsFinal3D(src, ~)
         addpoints(d.hTrail2, d.StoredData.V2Pos(1,k), d.StoredData.V2Pos(2,k), d.StoredData.V2Pos(3,k));
     end
     
-    % 2. SINR
+    % 2. SNR
     subplot(3,3,4); hold on;
-    plot(currT, d.SINR_UE1_dB(f), 'bo', 'MarkerFaceColor', 'b');
-    plot(currT, d.SINR_UE2_dB(f), 'ro', 'MarkerFaceColor', 'r');
+    plot(currT, d.SNR_UE1_dB(f), 'bo', 'MarkerFaceColor', 'b');
+    plot(currT, d.SNR_UE2_dB(f), 'ro', 'MarkerFaceColor', 'r');
     
     % 2a. Power - AGGIUNTO
     subplot(3,3,7); hold on;
