@@ -95,7 +95,7 @@ disp('Simulazione completata.');
 
 % --- VISUALIZZAZIONE ---
 % Per il plot, sottocampioniamo i dati se sono troppi (es. prendiamo 1 campione ogni 100)
-downsample_factor = 100;
+downsample_factor = 10;
 idx_plot = 1:downsample_factor:totalSamples;
 
 figure('Name', 'Streaming Simulation', 'Position', [100, 100, 1000, 600]);
