@@ -122,8 +122,7 @@ for n = 1:numSlots
     
     H_est = nrPerfectChannelEstimate(carrier, pathGains, pathFilters, offset, sampleTimes);
     
-    % Applica attenuazione path loss alla stima canale
-    H_est = H_est * attenuation;
+    % NON applicare path loss qui: è già presente nei campioni rxWaveform_total!
     
     % Safety Match Dimensioni
     [rows, cols, rxAnts, txAnts] = size(H_est);
@@ -136,17 +135,29 @@ for n = 1:numSlots
     
     for k = 1:rows
         for m = 1:cols
-            % H: [4 x 1] guadagni dalle 4 antenne TX (include path loss)
+            % H: [4 x 1] guadagni dalle 4 antenne TX
             H_vec = squeeze(H_est(k, m, 1, :)); % [4 x 1]
             
             % Canale equivalente MISO: y = (H1 + H2 + H3 + H4) * x + n
-            H_equivalent = sum(H_vec); % Scalare
+            % Applico attenuazione path loss alla stima canale
+            H_equivalent = sum(H_vec) * attenuation; % Scalare con path loss
             
             y_rx = rxGrid(k, m, 1); % Segnale ricevuto
             
             % Zero-Forcing: x_eq = y / H_eq
-            rxSym_eq(k, m) = y_rx / H_equivalent;
+            if abs(H_equivalent) > 1e-10  % Evita divisione per zero
+                rxSym_eq(k, m) = y_rx / H_equivalent;
+            else
+                rxSym_eq(k, m) = 0;  % Canale troppo debole
+            end
         end
+    end
+    
+    % NORMALIZZAZIONE POST-EQUALIZZAZIONE
+    % L'equalizzatore ZF può amplificare troppo: normalizziamo rispetto alla potenza attesa
+    power_rxSym = mean(abs(rxSym_eq(:)).^2);
+    if power_rxSym > 1.5  % Se potenza > 1.5 (16-QAM normalizzato ha potenza = 1)
+        rxSym_eq = rxSym_eq / sqrt(power_rxSym);  % Riporta a potenza unitaria
     end
     
     % DEBUG: Prima iterazione

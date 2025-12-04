@@ -1,15 +1,17 @@
 close all; clear; clc;
 
 %% =======================
-%  1) OFDM & SYSTEM PARAMETERS
+%  1) OFDM & SYSTEM PARAMETERS 
 %% =======================
-scs = 30e3;             
+scs = 30e3; % 50Mhz          
 M   = 16;               
-Nfft = 64;              
-CPLength = 16;          
+Nfft = 2048;              
+CPLength = 512;          
 Ns = Nfft + CPLength;   
-GuardBands = [6; 6];
-pilotIndices = [12; 26; 40; 54]; 
+GuardBands = [191; 191];
+start_active = GuardBands(1) + 1;
+end_active = Nfft - GuardBands(2);
+pilotIndices = (start_active:14:end_active).';
 pilotVal = 1+1j;        
 
 all_indices = (1:Nfft).';
@@ -86,7 +88,7 @@ TX_Grid1(pilotIndices, :) = pilotVal * Tx_Amplitude;
 
 TX_Grid2 = zeros(Nfft, nSymbols);
 TX_Grid2(dataIndices, :) = matTx2 * Tx_Amplitude; 
-TX_Grid2(pilotIndices, :) = (rand(4, nSymbols)+1j*rand(4, nSymbols)) * Tx_Amplitude;
+TX_Grid2(pilotIndices, :) = (rand(numel(pilotIndices), nSymbols)+1j*rand(numel(pilotIndices), nSymbols)) * Tx_Amplitude;
 
 %% =======================
 %  4) GRAPHICS SETUP
