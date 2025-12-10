@@ -3,6 +3,67 @@ note: the written files are the correct final versions of the work in each level
 
 ## D0: 2D, 1 BS, LOS (FRIIS), Narrow, DoA (20/11/25-22/11-25)
 ```LEVEL_D0_final.m```
+
+### Key Features of the Code:
+Scenario: 2D environment with one Base Station (BS) and two moving User Equipments (UEs).
+
+Channel Model: Line-of-Sight (LOS) using Friis free-space path loss.
+
+Signal Type: Narrowband (single frequency sinusoids).
+
+DoA Estimation: Known from geometry (no algorithmic estimation like MUSIC).
+
+Beamforming: Minimum Variance Distortionless Response (MVDR) adaptive beamforming.
+
+UE Management: Extended UE struct with active/inactive states and DOA tracking.
+
+SINR Calculation: Computes SINR for each UE considering interference and noise.
+
+Visualization: Real-time updating plots for scenario, SINR, and beam patterns.
+
+Replay Functionality: Time slider to review simulation frames.
+
+### Core Workflow:
+Initialize Parameters: System (frequency, sampling), geometry (BS/UE positions), and waveforms.
+
+Physics Step: Move UEs each frame based on velocities.
+
+Channel Propagation: Compute received signals at BS using Friis model.
+
+DoA from Geometry: Calculate angles directly from UE-BS positions.
+
+MDL Estimation: Estimate number of active UEs per frame using Minimum Description Length.
+
+MVDR Beamforming: Compute beamforming weights to maximize SINR.
+
+SINR Calculation: Compute SINR for each UE.
+
+Visualization Update: Update plots in real-time.
+
+Data Storage: Store all data for later replay with slider.
+
+### Technical Details:
+Array: 8-element ULA with λ/2 spacing.
+
+Noise: AWGN with thermal noise calculation.
+
+DOA: Known exactly from geometry (no estimation error).
+
+Beamforming: MVDR with inverse covariance matrix.
+
+SINR: Calculated considering both interference and noise.
+
+### Novel Aspects:
+UE struct with state management (active, tracking, lost).
+
+Per-frame MDL estimation for number of sources.
+
+Real-time visualization with comprehensive plots.
+
+Post-simulation replay with interactive slider.
+
+Combined beam pattern visualization.
+
 ## D1: 2D, 1 BS, LOS (FRIIS), Narrow, LMS (22/11/25-24/11-25)
 ```LEVEL_D1_plot.m``` 
 ## C0: 3D, 1 BS, LOS (FRIIS), Narrow, LMS (23/11/25-24/11-25)
