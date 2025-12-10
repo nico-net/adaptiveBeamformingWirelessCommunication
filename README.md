@@ -4,7 +4,9 @@ note: the written files are the correct final versions of the work in each level
 ## D0: 2D, 1 BS, LOS (FRIIS), Narrow, DoA (20/11/25-22/11-25)
 ```LEVEL_D0_final.m```
 
-### Key Features of the Code:
+<details>
+
+<summary> ### Key Features of the Code: </summary>
 Scenario: 2D environment with one Base Station (BS) and two moving User Equipments (UEs).
 
 Channel Model: Line-of-Sight (LOS) using Friis free-space path loss.
@@ -63,6 +65,8 @@ Real-time visualization with comprehensive plots.
 Post-simulation replay with interactive slider.
 
 Combined beam pattern visualization.
+
+</details>
 
 ## D1: 2D, 1 BS, LOS (FRIIS), Narrow, LMS (22/11/25-24/11-25)
 ```LEVEL_D1_plot.m``` 
