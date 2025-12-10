@@ -162,6 +162,124 @@ Slider: Same replay functionality as D0
 <summary> Key Features of this Code: </summary>
 
 
+### Key Features:
+3D environment (major upgrade from D0/D1)
+
+Uniform Rectangular Array (URA): 16x16 elements (256 total)
+
+Dual-polarization antennas: CrossedDipoleAntennaElement
+
+3D beamforming: Full azimuth and elevation steering
+
+LMS adaptive algorithm with conditional updates
+
+3D visualization with separate azimuth and elevation cuts
+
+Elevated BS: BS at 25m height, UEs at 1.5m height
+
+### Core Workflow:
+1. 3D Geometry Setup: BS elevated, UEs moving in 3D space with different velocity vectors
+
+2. URA Configuration: Large 16x16 array for high spatial resolution
+
+3. 3D Channel: Free-space propagation with 3D positioning
+
+4. DOA Calculation: Full 3D spherical coordinates (azimuth + elevation)
+
+5. LMS Beamforming: Conditional updates based on DOA variation
+
+6. Pattern Analysis: Dual-cut visualization (azimuth and elevation)
+
+7. 3D Visualization: Full 3D scenario plotting
+
+### Technical Details:
+Array: 16x16 URA (256 elements) with λ/2 spacing in both dimensions
+
+Antennas: Crossed dipoles for polarization diversity
+
+3D DOA: Calculated as:
+
+Azimuth: φ = atan2(y, x)
+
+Elevation: θ = atan2(z, √(x²+y²))
+
+Beam Pattern Visualization:
+
+Azimuth cuts at constant elevation
+
+Elevation cuts at constant azimuth
+
+Combined interference patterns
+
+LMS Updates: Trigger when DOA variation > 1° (more sensitive than D1)
+
+### Novel Aspects Compared to D1:
+3D vs 2D: Full spatial dimension with elevation component
+
+URA vs ULA: Rectangular array enables 2D beamforming
+
+Dual-Polarization: Crossed dipoles for polarization diversity
+
+Elevated BS: Realistic BS positioning at height
+
+Dual-Cut Patterns: Separate azimuth and elevation beam patterns
+
+3D Trajectories: UEs move in 3D space, not just horizontal plane
+
+### Visualization Innovations:
+3D Scenario Plot: Interactive 3D view of BS and UEs
+
+Dual-Pattern Display:
+
+Columns 3-4: UE1 and UE2 azimuth patterns
+
+Columns 8-9: UE1 and UE2 elevation patterns
+
+Column 5: Combined azimuth pattern
+
+Column 10: Combined elevation pattern
+
+3D Trails: Animated trails showing UE trajectories in 3D
+
+Dashboard Layout: 2x5 grid with comprehensive metrics
+
+### Beamforming Complexity:
+Steering vectors: Now 3D [azimuth; elevation]
+
+Pattern calculation: Requires cuts through 2D beamspace
+
+Interference management: More complex in 3D space
+
+Resolution: Higher due to larger array (256 vs 8 elements)
+
+### Key Analysis:
+Spatial resolution: Much finer beamwidth with large URA
+
+3D null steering: Ability to place nulls in both azimuth and elevation
+
+Elevation tracking: New dimension for interference management
+
+Array gain: Significantly higher (256 elements vs 8)
+
+### Performance Considerations:
+Computational load: Higher due to larger array and 3D processing
+
+Update sensitivity: 1° threshold for LMS updates
+
+3D SINR: More complex interference geometry
+
+Pattern stability: Requires tracking in two angular dimensions
+
+### Physical Realism:
+BS height: 25m typical of cellular towers
+
+UE height: 1.5m typical of vehicle antennas
+
+3D motion: Realistic vehicle trajectories
+
+Polarization: Crossed dipoles for better signal capture
+
+
 </details>
 
 
