@@ -94,7 +94,7 @@ Channel: LOS Friis model
 
 MDL Estimation: Determine number of active UEs per frame
 
-LMS Beamforming:
+#### LMS Beamforming:
 
 Updates only when DOA variation exceeds threshold (4°)
 
@@ -109,7 +109,7 @@ Performance Tracking: Stores "time since last LMS update"
 Visualization: Real-time plots including new power vs time
 
 ### Technical Details:
-LMS Algorithm:
+#### LMS Algorithm:
 
 Updates weights: w(n+1) = w(n) + μ·x(n)·e*(n)
 
@@ -157,6 +157,14 @@ Slider: Same replay functionality as D0
 
 ## C0: 3D, 1 BS, LOS (FRIIS), Narrow, LMS (23/11/25-24/11-25)
 ```C0.m``` or ```C0_1_3D_Pattern.m```
+
+<details>
+<summary> Key Features of this Code: </summary>
+
+
+</details>
+
+
 ## C: 3D, 1 BS, LOS (FRIIS), OFDM, LMS (wideband) (24/11/25-30/11/25)
 ```C_ ``` DA SCEGLIERE
 ## B: 2D, 1 BS, Multipath simplified, OFDM, LMS (wideband) (01/12/25-10/12/25)
