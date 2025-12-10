@@ -285,11 +285,26 @@ Polarization: Crossed dipoles for better signal capture
 
 ## C: 3D, 1 BS, LOS (FRIIS), OFDM, LMS (wideband) (24/11/25-30/11/25)
 ```C_ ``` DA SCEGLIERE
-## B: 2D, 1 BS, Multipath simplified, OFDM, LMS (wideband) (01/12/25-10/12/25)
-```B_noMUMIMO.m``` and ```B_noMUMIMO_channel.m```
-## A: 3D, 2 BS, 3GPP, OFDM, LMS (wideband) (11/12/25-)
 
-5 cases of study:
+<details>
+<summary> Key Features of this Code: </summary>
+
+
+</details>
+
+## B: 2D, 1 BS, Multipath simplified|CDL, OFDM, LMS (wideband) (01/12/25-10/12/25)
+```B_noMUMIMO.m``` and ```B_noMUMIMO_channel.m```
+
+<details>
+<summary> Key Features of this Code: </summary>
+
+
+</details>
+
+
+## A: 3D, 1 BS, CDL 3GPP, OFDM, LMS (wideband) (11/12/25-)
+
+4 cases of study:
 ### 1) Simple tracking case in different 3GPP channels
 ```A_simple.m```
 
@@ -310,8 +325,6 @@ This experiment is done in order to see the doppler effect on a real channel. We
 
 We wanted to try to create an adaptive modulation coding algorithm based on the sinr tables. We have a UE1 that is going far away from the BS, so that as the sinr decreases the MC changes accordingly. So we should see the constellation changing.
 
-### 5) altro?
-```.m```
 
 
 # PLOTS TO COMPARE:
