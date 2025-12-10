@@ -37,21 +37,21 @@ We wanted to try to create an adaptive modulation coding algorithm based on the 
 ### 5) altro?
 ```.m```
 
-#Christmas BONUS:
-##S: 3D, 1BS + 1 BS mobile (drone), 3GPP, OFDM/NR, LMS (wideband)
+
+# PLOTS TO COMPARE:
+* SINR vs TIME
+* BER vs TIME
+* THROUPUT vs TIME
+* MODULATION ORDER vs TIME (in A.4)
+* DOPPLER vs TIME (in A.3)
+
+
+# Christmas BONUS:
+## S: 3D, 1BS + 1 BS mobile (drone), 3GPP, OFDM/NR, LMS (wideband)
 ```bonus.m```
 
 
-#PLOTS TO COMPARE:
-SINR vs TIME
 
-BER vs TIME
-
-THROUPUT vs TIME
-
-MODULATION ORDER vs TIME (in A.4)
-
-DOPPLER vs TIME (in A.3)
 
 
 
