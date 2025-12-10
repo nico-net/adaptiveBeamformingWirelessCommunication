@@ -6,7 +6,7 @@ note: the written files are the correct final versions of the work in each level
 
 <details>
 
-<summary> ### Key Features of the Code: </summary>
+<summary> Key Features of this Code: </summary>
 Scenario: 2D environment with one Base Station (BS) and two moving User Equipments (UEs).
 
 Channel Model: Line-of-Sight (LOS) using Friis free-space path loss.
