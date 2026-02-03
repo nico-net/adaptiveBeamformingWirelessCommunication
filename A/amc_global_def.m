@@ -7,12 +7,15 @@
 % The simulation iterates over multiple time slots, allowing for the evaluation of the system's performance in terms of 
 % Bit Error Rate (BER), SINR, and Modulation and Coding Scheme (MCS) adaptation based on the channel conditions.
 % ==================================================================
-clear all; clc; close all;
+clear all; clc; %close all;
 USE_CDL_FADING = true; 
-delay_profile_channel = 'CDL-D'; 
+delay_profile_channel = 'CDL-E'; %dense urban scenario
 plot_ofdm_spectrum = false;
 plot_ofdm_RealTimeResourceGrid_Spectrogram = false;
+single_modulation_comparison = false; fixed_modulation = 64;
+beamforming_active = false; % Toggle for beamforming (True = NLMS Active, False = Omnidirectional)
 
+set(0, 'DefaultTextColor', 'k');     % Title in black for visibility
 %% --- 1. CONFIGURATION ---
 % 5G NR Carrier Setup
 carrier = nrCarrierConfig;
@@ -72,7 +75,7 @@ nTotalSlots = 2000;
 Pars.fc = 3.5e9; 
 slotDuration = 1e-3 / (carrier.SubcarrierSpacing/15); 
 BS_Pos = [0;0;25];
-AntSize = [5,5];
+AntSize = [4,4];
 N_ant_BS = prod(AntSize);
 
 %% --- 3.1 PRE-SIMULATION - OFDM SPECTRUM CHECK---
@@ -123,8 +126,8 @@ UEs = repmat(struct('pos', [], 'vel', [], 'channel_dl', [], 'channel_ul', [], 'h
 colors = lines(N_UE);
 
 %UE position and velocity
-initial_pos_ue = [800; 40; 1.5]; 
-initial_vel_ue = [700; 50; 0]/3.6;
+initial_pos_ue = [600; 40; 1.5]; 
+initial_vel_ue = [30; 50; 0]/3.6; %800
 
 for u = 1:N_UE
     UEs(u).pos = initial_pos_ue;
@@ -132,29 +135,49 @@ for u = 1:N_UE
     UEs(u).color = colors(u,:);
     
      % Configure Downlink Channel
-    cdl_dl = nrCDLChannel; cdl_dl.DelayProfile = delay_profile_channel; cdl_dl.DelaySpread = 30e-9;
-    cdl_dl.CarrierFrequency = Pars.fc; cdl_dl.TransmitAntennaArray.Size = [AntSize(1) AntSize(2) 1 1 1];
-    cdl_dl.ReceiveAntennaArray.Size = [1 1 1 1 1]; cdl_dl.SampleRate = SampleRate;
-    cdl_dl.Seed = u*123; cdl_dl.ChannelFiltering = true; 
-    [~,~] = cdl_dl(complex(zeros(10,N_ant_BS))); 
+    % cdl_dl = nrCDLChannel; cdl_dl.DelayProfile = delay_profile_channel; cdl_dl.DelaySpread = 30e-9;
+    % cdl_dl.CarrierFrequency = Pars.fc; cdl_dl.TransmitAntennaArray.Size = [AntSize(1) AntSize(2) 1 1 1];
+    % cdl_dl.ReceiveAntennaArray.Size = [1 1 1 1 1]; cdl_dl.SampleRate = SampleRate;
+    % cdl_dl.Seed = u*123; cdl_dl.ChannelFiltering = true; 
+    % [~,~] = cdl_dl(complex(zeros(10,N_ant_BS))); 
+    % 
+    %  % Configure Uplink Channel
+    % cdl_ul = nrCDLChannel; cdl_ul.DelayProfile = delay_profile_channel; cdl_ul.DelaySpread = 30e-9;
+    % cdl_ul.CarrierFrequency = Pars.fc; cdl_ul.TransmitAntennaArray.Size = [1 1 1 1 1];
+    % cdl_ul.ReceiveAntennaArray.Size = [AntSize(1) AntSize(2) 1 1 1]; cdl_ul.SampleRate = SampleRate;
+    % cdl_ul.Seed = u*123; cdl_ul.ChannelFiltering = true;
     
-     % Configure Uplink Channel
-    cdl_ul = nrCDLChannel; cdl_ul.DelayProfile = delay_profile_channel; cdl_ul.DelaySpread = 30e-9;
-    cdl_ul.CarrierFrequency = Pars.fc; cdl_ul.TransmitAntennaArray.Size = [1 1 1 1 1];
-    cdl_ul.ReceiveAntennaArray.Size = [AntSize(1) AntSize(2) 1 1 1]; cdl_ul.SampleRate = SampleRate;
-    cdl_ul.Seed = u*123; cdl_ul.ChannelFiltering = true;
+    % Configure Reciprocal Channel
+    % Initial setup: Base Station (Tx) -> UE (Rx)
+    cdl = nrCDLChannel; 
+    cdl.DelayProfile = delay_profile_channel; 
+    cdl.DelaySpread = 30e-9;
+    cdl.CarrierFrequency = Pars.fc; 
     
+    cdl.TransmitAntennaArray.Size = [AntSize(1) AntSize(2) 1 1 1]; % BS Size
+    cdl.ReceiveAntennaArray.Size = [1 1 1 1 1];                    % UE Size
+    
+    cdl.SampleRate = SampleRate;
+    cdl.Seed = u*123; 
+    cdl.ChannelFiltering = true; 
+    
+    % Initialize internal state
+    [~,~] = cdl(complex(zeros(10,N_ant_BS))); 
+
+    cdl_dl = cdl;
+    cdl_ul = cdl;
+
     UEs(u).channel_dl = cdl_dl; UEs(u).channel_ul = cdl_ul; 
     UEs(u).hist_ber = nan(1, nTotalSlots);
     UEs(u).hist_sinr = nan(1, nTotalSlots);
     UEs(u).hist_mcs = nan(1, nTotalSlots);
 end
 % Transmission Power Config
-TxPower_dBm_DL = 43; 
-TxPower_dBm_UL = 12;
+TxPower_dBm_DL = 26; 
+TxPower_dBm_UL = 15;
 
 % Noise calculation
-kB = physconst('Boltzmann'); T = 290; NF_dB = 5;
+kB = physconst('Boltzmann'); T = 290; NF_dB = 7;
 noise_power = kB * T * SampleRate * 10^(NF_dB/10);
 noise_std = sqrt(noise_power / 2);
 
@@ -231,7 +254,13 @@ if plot_ofdm_RealTimeResourceGrid_Spectrogram
 end
 
 %for real time plots theory friis and 3gpp
-P_tx_W_DL = 10^((TxPower_dBm_DL - 30)/10); BF_Gain_Linear = 1; Noise_W = noise_power;
+P_tx_W_DL = 10^((TxPower_dBm_DL - 30)/10); 
+if beamforming_active
+    BF_Gain_Linear = sqrt(N_ant_BS); % Full array gain (25 antennas -> ~14dB)
+else
+    BF_Gain_Linear = 1; % SISO gain (0dB)
+end 
+Noise_W = noise_power;
 hTheoryFriis = animatedline(axSINR, 'Color', [1 0.5 0], 'LineStyle', '--', 'LineWidth', 1.5);
 hTheory3GPP  = animatedline(axSINR, 'Color', 'y', 'LineStyle', '-.', 'LineWidth', 1.5);
 current_sinr_dB = 30; dist_trace = nan(1, nTotalSlots); %just initialization
@@ -275,14 +304,47 @@ for slot_idx = 1:nTotalSlots
             const_color = 'w';
         end
 
+        %to compare with respect to fixed modulation for all the simulation
+        if single_modulation_comparison
+            if fixed_modulation == 64
+                M_DL = 64;  % 64-QAM (excellent signal)
+                const_color = 'r';
+            end
+            if fixed_modulation == 16
+                M_DL = 16;  % 16-QAM (good signal)
+                const_color = 'g';
+            end
+            if fixed_modulation == 4
+                M_DL = 4;   % QPSK (fair signal)
+                const_color = 'b';
+            end
+            if fixed_modulation == 2
+                M_DL = 2;   % BPSK (poor signal)
+                const_color = 'w';
+            end
+        end
+
         mcs_trace(slot_idx) = M_DL; UEs(u).hist_mcs(slot_idx) = M_DL;
         UEs(u).channel_dl.InitialTime = simTime; UEs(u).channel_ul.InitialTime = simTime;
-        
+        chanObj = UEs(u).channel_dl;
+        chanObj.InitialTime = simTime;
+
         if isDownlink
             % --- DOWNLINK ---
+
+            if chanObj.TransmitAndReceiveSwapped
+                swapTransmitAndReceive(chanObj);
+            end
+
             data_grids = zeros(K, FRAME_STRUCT.DATA_SYMS, N_ant_BS); all_bits = []; release(UEs(u).channel_dl);
-            w_tx = conj(w_beam); 
-            w_tx = w_tx / (norm(w_tx)+eps);
+            if beamforming_active
+                w_tx = conj(w_beam); 
+                w_tx = w_tx / (norm(w_tx)+eps);
+            else
+                w_tx = zeros(N_ant_BS, 1);
+                w_tx(1) = 1;
+            end
+            
             for sym = 1:FRAME_STRUCT.DATA_SYMS
                 grid_sym = zeros(K,1); 
                 if ismember(sym, DMRS_positions)
@@ -343,6 +405,11 @@ for slot_idx = 1:nTotalSlots
             
         else
             % --- UPLINK ---
+
+            if ~chanObj.TransmitAndReceiveSwapped
+                swapTransmitAndReceive(chanObj);
+            end        
+
             data_grids = zeros(K, FRAME_STRUCT.DATA_SYMS, 1); all_bits = []; release(UEs(u).channel_ul);
             for sym = 1:FRAME_STRUCT.DATA_SYMS
                 grid_sym = zeros(K,1);
@@ -389,19 +456,23 @@ for slot_idx = 1:nTotalSlots
             end
             
             %NLMS
-            avg_sq_error = 0; count_samples = 0;
-            for i = 1:length(DMRS_positions)
-                rx_vecs = squeeze(rx_dmrs_stabilized(:, i, :)); 
-                if any(isnan(rx_vecs(:))) continue; end
-                for re = 1:size(rx_vecs, 1)
-                    u_in = rx_vecs(re, :).'; d_des = dmrs_seq(re);
-                    y_out = w_beam' * u_in; e = d_des - y_out;
-                    w_beam = w_beam + (mu_current / (u_in' * u_in + 1e-6)) * u_in * conj(e);
-                    avg_sq_error = avg_sq_error + abs(e)^2; count_samples = count_samples + 1;
+            %update only if beamforming is active
+            count_samples = 0;
+            if beamforming_active
+                avg_sq_error = 0; 
+                for i = 1:length(DMRS_positions)
+                    rx_vecs = squeeze(rx_dmrs_stabilized(:, i, :)); 
+                    if any(isnan(rx_vecs(:))) continue; end
+                    for re = 1:size(rx_vecs, 1)
+                        u_in = rx_vecs(re, :).'; d_des = dmrs_seq(re);
+                        y_out = w_beam' * u_in; e = d_des - y_out;
+                        w_beam = w_beam + (mu_current / (u_in' * u_in + 1e-6)) * u_in * conj(e);
+                        avg_sq_error = avg_sq_error + abs(e)^2; count_samples = count_samples + 1;
+                    end
                 end
+                w_beam = w_beam / norm(w_beam);
             end
-            w_beam = w_beam / norm(w_beam);
-            
+
             if count_samples > 0
                 mse_current = avg_sq_error / count_samples;
                 mu_current = alpha_mu * mu_current + (1 - alpha_mu) * max(mu_min, min(mu_max, 3 * mse_current));
@@ -574,6 +645,10 @@ plot(axBER, 1:nTotalSlots, ber_trend, 'w-', 'LineWidth', 2, 'DisplayName', 'Tren
 
 global_avg_ber = mean(ber_dl_trace, 'omitnan');
 title(axBER, sprintf('BER Performance (Avg: %.2e)', global_avg_ber));
+
+yline(axBER, global_avg_ber, 'r--', 'LineWidth', 2, ...
+    'DisplayName', sprintf('Global Mean: %.2e', global_avg_ber));
+
 legend(axBER, 'Location', 'southwest');
 
 fprintf('Grafici Real-Time aggiornati con linee di tendenza (media).\n');
@@ -751,3 +826,91 @@ fprintf('Figura duplicata aperta correttamente con doppio asse.\n');
 
 
 fprintf('\n The end\n Pietro Guidetti - 10808180\n Polimi - Wireless Communication Project 2025');
+
+
+%% --- 11. AUTOMATIC SAVING ---
+fprintf('\nSalvataggio delle figure in corso...\n');
+
+% 1. Crea nome cartella con Timestamp (es: Results_2023_10_27__15_30_00)
+timestamp = datestr(now, 'yyyy_mm_dd__HH_MM_SS');
+folderName = fullfile(pwd, ['Results_' timestamp]);
+
+% 2. Crea la cartella
+if ~exist(folderName, 'dir')
+    mkdir(folderName);
+end
+
+% 3. Trova tutte le figure aperte
+figHandles = findall(0, 'Type', 'figure');
+
+% 4. Ciclo di salvataggio
+for i = 1:length(figHandles)
+    hFig = figHandles(i);
+    
+    % Usa il 'Name' della figura come nome file, se vuoto usa 'Figure_N'
+    fileName = hFig.Name;
+    if isempty(fileName)
+        fileName = sprintf('Figure_%d', hFig.Number);
+    end
+    
+    % Rimuovi caratteri non validi per i nomi dei file (spazi, punti, ecc)
+    fileName = regexprep(fileName, '[^a-zA-Z0-9_]', '_');
+    
+    % Percorso completo
+    fullPath = fullfile(folderName, fileName);
+    
+    % Salva come PNG (immagine) e FIG (editabile Matlab)
+    saveas(hFig, [fullPath '.png']); % Immagine veloce
+    %savefig(hFig, [fullPath '.fig']); % File modificabile
+    
+    fprintf(' -> Salvato: %s\n', fileName);
+end
+
+fprintf('Tutte le figure sono state salvate in: %s\n', folderName);
+
+%% --- 12. SAVE PARAMETERS TO TXT ---
+paramFileName = fullfile(folderName, 'Simulation_Parameters.txt');
+fid = fopen(paramFileName, 'w');
+
+if fid ~= -1
+    fprintf(fid, '==================================================\n');
+    fprintf(fid, '       SIMULATION CONFIGURATION REPORT            \n');
+    fprintf(fid, '==================================================\n');
+    fprintf(fid, 'Date:                 %s\n', timestamp);
+    fprintf(fid, 'Script Name:          %s\n', mfilename);
+    fprintf(fid, '\n--- CONTROL SWITCHES ---\n');
+    fprintf(fid, 'Beamforming Active:   %d (1=ON [NLMS], 0=OFF [SISO])\n', beamforming_active);
+    fprintf(fid, 'Channel Reciprocity:  TRUE (Forced via swapTransmitAndReceive)\n');
+    fprintf(fid, 'Single Mod. Comp.:    %d (Fixed Mod comparison mode)\n', single_modulation_comparison);
+    if single_modulation_comparison, fprintf(fid, 'Fixed Modulation M:   %d\n', fixed_modulation); end
+    
+    fprintf(fid, '\n--- CHANNEL MODEL ---\n');
+    fprintf(fid, 'Channel Type:         %s\n', iif(USE_CDL_FADING, 'CDL (3GPP Stocastic)', 'Geometric (Pure Line-of-Sight)'));
+    fprintf(fid, 'CDL Profile:          %s\n', delay_profile_channel);
+    fprintf(fid, 'Delay Spread:         30e-9 s\n');
+    
+    fprintf(fid, '\n--- SYSTEM SETUP ---\n');
+    fprintf(fid, 'Carrier Freq:         %.2f GHz\n', Pars.fc/1e9);
+    fprintf(fid, 'Bandwidth (RBs):      %d\n', carrier.NSizeGrid);
+    fprintf(fid, 'Total Slots:          %d\n', nTotalSlots);
+    fprintf(fid, 'BS Antenna Array:     %dx%d (%d total)\n', AntSize(1), AntSize(2), N_ant_BS);
+
+    fprintf(fid, '\n--- POWER & NOISE ---\n');
+    fprintf(fid, 'Tx Power DL:          %.2f dBm\n', TxPower_dBm_DL);
+    fprintf(fid, 'Tx Power UL:          %.2f dBm\n', TxPower_dBm_UL);
+    
+    fprintf(fid, '\n--- USER EQUIPMENT (UE) ---\n');
+    fprintf(fid, 'Initial Pos (x,y,z):  [%.1f, %.1f, %.1f]\n', initial_pos_ue(1), initial_pos_ue(2), initial_pos_ue(3));
+    fprintf(fid, 'Velocity (v_x):       %.1f km/h\n', initial_vel_ue(1)*3.6);
+
+    fprintf(fid, '\n--- RESULTS SUMMARY ---\n');
+    fprintf(fid, 'Max Throughput:       %.2f MB/s\n', max_speed);
+    fprintf(fid, 'Avg Throughput:       %.2f MB/s\n', avg_speed);
+    fprintf(fid, 'Global Avg SINR:      %.2f dB\n', global_avg_sinr);
+    fprintf(fid, 'Global Avg BER:       %.2e\n', global_avg_ber);
+
+    fclose(fid);
+    fprintf(' -> Parametri salvati in: Simulation_Parameters.txt\n');
+else
+    fprintf('Errore: Impossibile creare il file di parametri.\n');
+end
